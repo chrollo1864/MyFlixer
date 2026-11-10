@@ -84,20 +84,20 @@ export const HomePage: React.FC = () => {
             {/* Recommended Section with [Movies] [TV Shows] [Trending] tabs */}
             {recSec?.enabled !== false && (
               <section className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-[#242832]">
-                  <div className="flex items-center gap-3">
-                    <h2 className="text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-2 border-b border-[#242832]">
+                  <div className="flex min-w-0 flex-col sm:flex-row sm:items-center gap-3">
+                    <h2 className="min-w-0 text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
                       <Sparkles className="w-5 h-5 text-[#db6937]" />
-                      <span>{recSec?.title || 'Recommended'}</span>
+                      <span className="break-words">{recSec?.title || 'Recommended'}</span>
                     </h2>
 
                   {/* Tabs */}
-                  {!recSec?.movieIds?.length && <div className="flex items-center gap-1 bg-[#242832] p-1 rounded-full text-xs">
+                  {!recSec?.movieIds?.length && <div className="max-w-full w-fit flex items-center gap-1 bg-[#242832] p-1 rounded-full text-xs overflow-x-auto">
                     {(['all', 'movies', 'tv', 'trending'] as const).map((tab) => (
                       <button
                         key={tab}
                         onClick={() => setRecommendedTab(tab)}
-                        className={`px-3 py-1.5 rounded-full font-semibold capitalize transition-all cursor-pointer ${
+                        className={`shrink-0 px-2.5 sm:px-3 py-1.5 rounded-full font-semibold capitalize transition-all cursor-pointer ${
                           recommendedTab === tab
                             ? 'bg-gradient-flixer text-white shadow-md'
                             : 'text-[#b2b1ad] hover:text-white'
@@ -111,7 +111,7 @@ export const HomePage: React.FC = () => {
 
                 <button
                   onClick={() => navigateTo('browse')}
-                  className="text-xs text-[#4f83d3] hover:text-white font-medium flex items-center gap-1 transition-colors cursor-pointer"
+                  className="self-end sm:self-auto shrink-0 text-xs text-[#4f83d3] hover:text-white font-medium flex items-center gap-1 transition-colors cursor-pointer"
                 >
                   <span>View All</span>
                   <ChevronRight className="w-3.5 h-3.5" />

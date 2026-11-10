@@ -107,13 +107,13 @@ export const Header: React.FC = () => {
         ? 'absolute top-0 inset-x-0 bg-transparent border-b border-transparent'
         : 'sticky top-0 bg-[#292d38] border-b border-[#242832]'
     }`}>
-      <div className="max-w-[1800px] mx-auto px-4 sm:px-6 h-20 flex items-center justify-between gap-4">
+      <div className="max-w-[1800px] mx-auto px-3 sm:px-6 h-16 sm:h-20 flex items-center justify-between gap-2 sm:gap-4">
         
         {/* Left Section: Menu Drawer Toggler & Logo */}
-        <div className="flex items-center gap-3 md:gap-4 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 md:gap-4 shrink-0 min-w-0">
           <button
             onClick={() => setIsMenuOpen(!isMenuOpen)}
-            className="w-10 h-10 rounded-full flex items-center justify-center text-[#e9ecef] hover:bg-[#242832] transition-colors"
+            className="w-8 h-8 sm:w-10 sm:h-10 shrink-0 rounded-full flex items-center justify-center text-[#e9ecef] hover:bg-[#242832] transition-colors"
             title="Toggle Menu"
             aria-label="Navigation Menu"
           >
@@ -124,12 +124,12 @@ export const Header: React.FC = () => {
           <a
             href="#/home"
             onClick={(e) => { e.preventDefault(); navigateTo('home'); }}
-            className="flex items-center gap-2 group cursor-pointer"
+            className="flex min-w-0 items-center gap-1.5 sm:gap-2 group cursor-pointer"
           >
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-[#db6937] via-[#6366f1] to-[#4f83d3] flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform">
+            <div className="w-8 h-8 sm:w-9 sm:h-9 shrink-0 rounded-lg sm:rounded-xl bg-gradient-to-tr from-[#db6937] via-[#6366f1] to-[#4f83d3] flex items-center justify-center shadow-lg group-hover:scale-105 transition-transform">
               <Film className="w-5 h-5 text-white" />
             </div>
-            <span className="text-2xl font-bold tracking-tight text-white font-['Poppins']">
+            <span className="text-lg min-[380px]:text-xl sm:text-2xl font-bold tracking-tight text-white font-['Poppins'] whitespace-nowrap">
               My<span className="text-gradient-flixer">Flixer</span>
             </span>
           </a>
@@ -220,11 +220,11 @@ export const Header: React.FC = () => {
         </div>
 
         {/* Right Section: Search and Auth */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           <button
             type="button"
             onClick={() => setIsMobileSearchOpen(open => !open)}
-            className="sm:hidden w-10 h-10 rounded-full bg-[#242832] hover:bg-[#343b4a] border border-[#3e4555] flex items-center justify-center text-[#e9ecef] transition-colors"
+            className="sm:hidden w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#242832] hover:bg-[#343b4a] border border-[#3e4555] flex items-center justify-center text-[#e9ecef] transition-colors"
             aria-label={isMobileSearchOpen ? 'Close search' : 'Open search'}
             aria-expanded={isMobileSearchOpen}
           >
@@ -234,7 +234,7 @@ export const Header: React.FC = () => {
           <button
             type="button"
             onClick={() => navigateTo('watchlist')}
-            className="w-10 h-10 rounded-full bg-[#242832] hover:bg-[#343b4a] border border-[#3e4555] flex items-center justify-center text-[#e9ecef] relative transition-colors"
+            className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-[#242832] hover:bg-[#343b4a] border border-[#3e4555] flex items-center justify-center text-[#e9ecef] relative transition-colors"
             title="My Watchlist"
             aria-label={`My Watchlist${favorites.length ? `, ${favorites.length} saved` : ''}`}
           >
@@ -308,10 +308,10 @@ export const Header: React.FC = () => {
           ) : (
             <button
               onClick={() => openModal('login')}
-              className="bg-gradient-flixer hover:opacity-95 text-white text-xs font-semibold px-4 py-2 rounded-full flex items-center gap-2 shadow-md transition-all active:scale-95"
+              className="bg-gradient-flixer hover:opacity-95 text-white text-xs font-semibold px-2.5 min-[380px]:px-3 sm:px-4 py-2 rounded-full flex items-center gap-1.5 sm:gap-2 shadow-md transition-all active:scale-95"
             >
               <User className="w-3.5 h-3.5" />
-              <span>Login</span>
+              <span className="hidden min-[380px]:inline">Login</span>
             </button>
           )}
         </div>
