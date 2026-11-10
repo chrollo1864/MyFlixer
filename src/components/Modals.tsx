@@ -194,10 +194,11 @@ export const Modals: React.FC = () => {
                   <input
                     type="password"
                     required
-                    minLength={isRegistering ? 12 : 1}
+                    minLength={isRegistering ? 8 : undefined}
+                    maxLength={128}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    placeholder={isRegistering ? 'At least 12 characters' : 'Enter your password'}
+                    placeholder={isRegistering ? 'At least 8 characters' : 'Enter your password'}
                     className="w-full bg-[#1a1c23] border border-[#3e4555] rounded-xl pl-10 pr-3 py-2.5 text-xs sm:text-sm text-white focus:outline-none focus:border-[#4f83d3]"
                   />
                 </div>

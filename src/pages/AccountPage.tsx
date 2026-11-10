@@ -154,9 +154,9 @@ export const AccountPage: React.FC = () => {
                   className="w-full rounded-xl border border-[#3e4555] bg-[#1a1c23] px-3 py-2.5 text-sm text-white focus:border-[#4f83d3] focus:outline-none" />
               </label>
               <label className="block space-y-1">
-                <span className="text-xs font-semibold text-[#b2b1ad]">New password (optional, 12+ characters)</span>
+                <span className="text-xs font-semibold text-[#b2b1ad]">New password (optional, at least 8 characters)</span>
                 <input type="password" autoComplete="new-password" value={newPassword}
-                  onChange={event => setNewPassword(event.target.value)} minLength={12} maxLength={128}
+                  onChange={event => setNewPassword(event.target.value)} minLength={newPassword ? 8 : undefined} maxLength={128}
                   className="w-full rounded-xl border border-[#3e4555] bg-[#1a1c23] px-3 py-2.5 text-sm text-white focus:border-[#4f83d3] focus:outline-none" />
               </label>
             </div>

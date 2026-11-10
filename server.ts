@@ -488,8 +488,8 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
   const password = String(req.body.password || '');
   if (!username || username.length > 64 || !displayName || displayName.length > 80
     || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254
-    || password.length < 12 || password.length > 128) {
-    return res.status(400).json({ error: 'Name, username, email, and a password of at least 12 characters are required.' });
+    || password.length < 8 || password.length > 128) {
+    return res.status(400).json({ error: 'Name, username, email, and a password between 8 and 128 characters are required.' });
   }
 
   let codeHash = '';
@@ -728,8 +728,8 @@ app.put('/api/user/profile', async (req: Request, res: Response) => {
   if (!currentPassword || !(await verifyPassword(currentPassword, currentUser.passwordHash))) {
     return res.status(403).json({ error: 'Your current password is incorrect.' });
   }
-  if (newPassword && (newPassword.length < 12 || newPassword.length > 128)) {
-    return res.status(400).json({ error: 'New password must be between 12 and 128 characters.' });
+  if (newPassword && (newPassword.length < 8 || newPassword.length > 128)) {
+    return res.status(400).json({ error: 'New password must be between 8 and 128 characters.' });
   }
   if (!validProfileImage(avatar)) {
     return res.status(400).json({ error: 'Profile image must be a JPG, PNG, WebP, or GIF up to 500 KB.' });
@@ -974,8 +974,8 @@ async function bootstrapAdmin() {
   const username = String(process.env.ADMIN_USERNAME || '').trim();
   const email = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
   const password = String(process.env.ADMIN_PASSWORD || '');
-  if (!username || !email || password.length < 16) {
-    throw new Error('Set ADMIN_USERNAME, ADMIN_EMAIL, and an ADMIN_PASSWORD of at least 16 characters before startup.');
+  if (!username || !email || password.length < 8 || password.length > 128) {
+    throw new Error('Set ADMIN_USERNAME, ADMIN_EMAIL, and an ADMIN_PASSWORD between 8 and 128 characters before startup.');
   }
 
   const passwordHash = await hashPassword(password);
@@ -1073,8 +1073,8 @@ app.post('/api/admin/users', async (req: Request, res: Response) => {
       || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail) || nextEmail.length > 254) {
       return res.status(400).json({ error: 'Enter a valid name, username, and email address.' });
     }
-    if (nextPassword && (nextPassword.length < 12 || nextPassword.length > 128)) {
-      return res.status(400).json({ error: 'Password must be between 12 and 128 characters.' });
+    if (nextPassword && (nextPassword.length < 8 || nextPassword.length > 128)) {
+      return res.status(400).json({ error: 'Password must be between 8 and 128 characters.' });
     }
     if (!validProfileImage(nextAvatar)) {
       return res.status(400).json({ error: 'Profile image must be a JPG, PNG, WebP, or GIF up to 500 KB.' });
@@ -1141,8 +1141,8 @@ app.post('/api/admin/users', async (req: Request, res: Response) => {
   const newAvatar = avatar === undefined ? '' : avatar;
   if (!newUsername || newUsername.length > 64 || !newDisplayName || newDisplayName.length > 80
     || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(newEmail) || newEmail.length > 254
-    || newPassword.length < 12 || newPassword.length > 128) {
-    return res.status(400).json({ error: 'Name, username, email, and a password of at least 12 characters are required.' });
+    || newPassword.length < 8 || newPassword.length > 128) {
+    return res.status(400).json({ error: 'Name, username, email, and a password between 8 and 128 characters are required.' });
   }
   if (!validProfileImage(newAvatar)) return res.status(400).json({ error: 'Profile image must be a JPG, PNG, WebP, or GIF up to 500 KB.' });
   const passwordHash = await hashPassword(newPassword);

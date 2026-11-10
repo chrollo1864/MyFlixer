@@ -10,7 +10,7 @@ React/Vite frontend with an Express API and PostgreSQL persistence. The catalog 
 ## Local setup
 
 1. Create a PostgreSQL database and copy `.env.example` to `.env`.
-2. Set `DATABASE_URL`, `SESSION_SECRET`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` in `.env`. The administrator password must be at least 16 characters. `SESSION_SECRET` must be at least 32 characters.
+2. Set `DATABASE_URL`, `SESSION_SECRET`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` in `.env`. Passwords may contain any characters and must be 8–128 characters long. `SESSION_SECRET` must be at least 32 characters.
 3. Install dependencies and start the app:
 
    ```powershell
@@ -28,7 +28,7 @@ To enable public registration, turn on registration in Admin → Site Settings. 
 
 1. Create a PostgreSQL database on Render. For persistent production data, use a paid database plan; Render's free database is temporary.
 2. In Render, create a **Blueprint** from this repository and use the included `render.yaml`.
-3. When prompted, set `DATABASE_URL` to the database's **Internal Database URL**, and provide `ADMIN_USERNAME`, `ADMIN_EMAIL`, and a unique `ADMIN_PASSWORD` of at least 16 characters. The Blueprint generates `SESSION_SECRET` for you.
+3. When prompted, set `DATABASE_URL` to the database's **Internal Database URL**, and provide `ADMIN_USERNAME`, `ADMIN_EMAIL`, and an `ADMIN_PASSWORD` that is 8–128 characters long. The Blueprint generates `SESSION_SECRET` for you.
 4. Deploy. Render runs the production build and starts the web service; its health check uses `/api/health`.
 
 The web service is configured on Render's free plan, which may spin down after inactivity. Choose a paid web plan in Render if you need it to remain continuously available. To enable registration email, add the SMTP variables listed above in the Render service's environment settings.

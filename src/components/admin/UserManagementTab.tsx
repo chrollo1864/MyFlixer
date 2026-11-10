@@ -266,12 +266,12 @@ export const UserManagementTab: React.FC<UserManagementTabProps> = ({
 
               <div className="space-y-1">
                 <label className="font-semibold text-white">
-                  {editingUser ? 'Set new password (optional, 12+ characters)' : 'Initial Password * (12+ characters)'}
+                  {editingUser ? 'Set new password (optional, at least 8 characters)' : 'Initial Password * (at least 8 characters)'}
                 </label>
                 <input
                   type="password"
                   required={!editingUser}
-                  minLength={password ? 12 : undefined}
+                  minLength={password ? 8 : undefined}
                   maxLength={128}
                   autoComplete="new-password"
                   value={password}
