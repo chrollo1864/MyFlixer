@@ -1,0 +1,6 @@
+{
+  "name": "MyFlixer - Movies & TV Shows Stream",
+  "description": "Stream movies and TV series in HD with instant search, multi-server playback, customizable filters, and watchlist management.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

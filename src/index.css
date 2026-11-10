@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-dark: #1e2129;
+    --card-dark: #242832;
+    --card-surface: #292d38;
+    --card-subtle: #1a1c23;
+    --primary: #4f83d3;
+    --secondary: #db6937;
+    --text-primary: #e9ecef;
+    --text-muted: #b2b1ad;
+    --text-dim: #6c757d;
+  }
+
+  body {
+    background-color: var(--bg-dark);
+    color: var(--text-dim);
+    font-family: 'Poppins', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    overflow-x: hidden;
+  }
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #242832;
+}
+::-webkit-scrollbar-thumb {
+  background: #4f83d3;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #db6937;
+}
+
+/* MyFlixer Gradient utilities */
+.bg-gradient-flixer {
+  background: linear-gradient(90deg, #db6937 0%, #6366f1 50%, #4f83d3 100%);
+}
+
+.text-gradient-flixer {
+  background: linear-gradient(90deg, #db6937 0%, #818cf8 50%, #4f83d3 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.border-gradient-wrap {
+  position: relative;
+}
+
+.border-gradient-wrap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  padding: 1.5px;
+  background: linear-gradient(90deg, #db6937 0%, #4f83d3 100%);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
