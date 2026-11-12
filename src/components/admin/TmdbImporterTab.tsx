@@ -33,6 +33,10 @@ export const TmdbImporterTab: React.FC<TmdbImporterTabProps> = ({
   const [importProgress, setImportProgress] = useState('');
   const [showImportConfirmation, setShowImportConfirmation] = useState(false);
   const [isSyncingMetadata, setIsSyncingMetadata] = useState(false);
+  const [refreshingImage, setRefreshingImage] = useState<{
+    tmdbId: number;
+    field: 'posterUrl' | 'backdropUrl';
+  } | null>(null);
   const searchRequestId = useRef(0);
 
   const runSearch = useCallback(async (nextPage: number) => {
@@ -153,6 +157,19 @@ export const TmdbImporterTab: React.FC<TmdbImporterTabProps> = ({
       showToast(error instanceof Error ? error.message : 'Could not refresh catalog metadata.');
     } finally {
       setIsSyncingMetadata(false);
+    }
+  };
+
+  const handleRefreshImage = async (item: any, field: 'posterUrl' | 'backdropUrl') => {
+    setRefreshingImage({ tmdbId: item.tmdbId, field });
+    try {
+      const movie = await api.refreshTmdbImage(item.tmdbId, field, apiKey);
+      onImportSuccess(movie);
+      showToast(`"${movie.title}" ${field === 'posterUrl' ? 'poster' : 'backdrop'} refreshed from TMDB.`);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not refresh the TMDB image.');
+    } finally {
+      setRefreshingImage(null);
     }
   };
 
@@ -305,6 +322,9 @@ export const TmdbImporterTab: React.FC<TmdbImporterTabProps> = ({
             {results.map((item) => {
               const alreadyExists = alreadyInCatalog(item);
               const isImporting = importingId === item.tmdbId;
+              const isRefreshingPoster = refreshingImage?.tmdbId === item.tmdbId && refreshingImage?.field === 'posterUrl';
+              const isRefreshingBackdrop = refreshingImage?.tmdbId === item.tmdbId && refreshingImage?.field === 'backdropUrl';
+              const isBusy = isImporting || isImportingAll || refreshingImage !== null;
 
               return (
                 <div
@@ -346,9 +366,25 @@ export const TmdbImporterTab: React.FC<TmdbImporterTabProps> = ({
                           <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/10 px-2.5 py-1 rounded-lg">
                             <Check className="w-3.5 h-3.5" /><span>In Catalog</span>
                           </span>
-                          <button onClick={() => handleImport(item, 'publish', true, true)} disabled={isImporting}
+                          <button onClick={() => handleImport(item, 'publish', true, true)} disabled={isBusy}
                             className="py-1.5 px-2.5 rounded-xl bg-[#1a1c23] hover:bg-[#343b4a] text-white text-[11px] font-medium disabled:opacity-50">
                             {isImporting ? 'Updating...' : 'Update metadata'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleRefreshImage(item, 'posterUrl')}
+                            disabled={isBusy}
+                            className="py-1.5 px-2.5 rounded-xl bg-[#1a1c23] hover:bg-[#343b4a] text-white text-[11px] font-medium disabled:opacity-50"
+                          >
+                            {isRefreshingPoster ? 'Refreshing…' : 'Refresh poster'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleRefreshImage(item, 'backdropUrl')}
+                            disabled={isBusy}
+                            className="py-1.5 px-2.5 rounded-xl bg-[#1a1c23] hover:bg-[#343b4a] text-white text-[11px] font-medium disabled:opacity-50"
+                          >
+                            {isRefreshingBackdrop ? 'Refreshing…' : 'Refresh backdrop'}
                           </button>
                         </>
                       ) : (

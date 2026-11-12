@@ -2012,6 +2012,53 @@ app.post('/api/admin/tmdb/search', async (req: Request, res: Response) => {
   }
 });
 
+app.post('/api/admin/tmdb/refresh-image', async (req: Request, res: Response) => {
+  const { tmdbId, apiKey: requestedApiKey } = req.body;
+  const field: 'posterUrl' | 'backdropUrl' | null =
+    req.body.field === 'posterUrl' || req.body.field === 'backdropUrl' ? req.body.field : null;
+  if (!field) return res.status(400).json({ error: 'Choose a poster or backdrop to refresh.' });
+  if (tmdbId === undefined || tmdbId === null || String(tmdbId).trim() === '') {
+    return res.status(400).json({ error: 'A TMDB title ID is required.' });
+  }
+
+  const movie = MOVIES_STORE.find(item => String(item.tmdbId || '') === String(tmdbId));
+  if (!movie) return res.status(404).json({ error: 'The TMDB title is not in the catalog.' });
+
+  const apiKey = process.env.TMDB_API_KEY || requestedApiKey || CURRENT_THEME_OPTIONS.tmdb?.apiKey;
+  if (!apiKey || String(apiKey).trim().length <= 5) {
+    return res.status(503).json({ error: 'TMDB is unavailable. Configure a valid API key first.' });
+  }
+
+  let details: any;
+  try {
+    const response = await fetch(
+      `https://api.themoviedb.org/3/${movie.type}/${encodeURIComponent(String(tmdbId))}?api_key=${encodeURIComponent(String(apiKey).trim())}`,
+      { signal: AbortSignal.timeout(15000) }
+    );
+    if (!response.ok) {
+      return res.status(502).json({ error: 'Could not retrieve title details from TMDB. Verify the API key and try again.' });
+    }
+    details = await response.json();
+  } catch (error) {
+    console.error(`TMDB image refresh failed for ${movie.id}:`, error);
+    return res.status(502).json({ error: 'Could not retrieve title details from TMDB. Verify the network and API key, then try again.' });
+  }
+
+  const imagePath = field === 'posterUrl' ? details.poster_path : details.backdrop_path;
+  if (typeof imagePath !== 'string' || !imagePath.startsWith('/')) {
+    return res.status(404).json({ error: `TMDB does not have a ${field === 'posterUrl' ? 'poster' : 'backdrop'} for this title.` });
+  }
+
+  const size = field === 'posterUrl' ? 'w500' : 'original';
+  movie[field] = await cacheTmdbImage(imagePath, size, String(tmdbId))
+    || `https://image.tmdb.org/t/p/${size}${imagePath}`;
+  await database.query(
+    'UPDATE myflixer_movies SET data = $2, updated_at = NOW() WHERE id = $1',
+    [movie.id, movie]
+  );
+  return res.json({ movie });
+});
+
 app.post('/api/admin/tmdb/sync-catalog-metadata', async (req: Request, res: Response) => {
   const apiKey = process.env.TMDB_API_KEY || req.body.apiKey || CURRENT_THEME_OPTIONS.tmdb.apiKey;
   if (!apiKey || String(apiKey).trim().length <= 5) {

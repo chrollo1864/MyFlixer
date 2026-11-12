@@ -650,6 +650,24 @@ class MovieApiService {
     return { updated: data.updated, failed: data.failed, total: data.total };
   }
 
+  public async refreshTmdbImage(
+    tmdbId: number,
+    field: 'posterUrl' | 'backdropUrl',
+    apiKey?: string
+  ): Promise<Movie> {
+    const res = await fetch('/api/admin/tmdb/refresh-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tmdbId, field, apiKey })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not refresh the TMDB image.');
+    if (!data.movie || typeof data.movie !== 'object') {
+      throw new Error('TMDB image refresh returned an unexpected response.');
+    }
+    return data.movie as Movie;
+  }
+
   public async importTmdb(payload: any): Promise<any> {
     const res = await fetch('/api/admin/tmdb/import', {
       method: 'POST',

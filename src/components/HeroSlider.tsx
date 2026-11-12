@@ -222,8 +222,8 @@ export const HeroSlider: React.FC<HeroSliderProps> = ({ movies }) => {
           style={{ backgroundImage: `url(${movies[pendingIndexRef.current].backdropUrl})` }}
           aria-hidden="true"
         >
-          <div className="absolute inset-0 bg-gradient-to-t from-[#1e2129] via-[#1e2129]/80 to-transparent" />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#1e2129] via-[#1e2129]/60 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#1e2129] via-[#1e2129]/55 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-r from-[#1e2129]/80 via-[#1e2129]/35 to-transparent" />
         </div>
       )}
 
@@ -241,11 +241,10 @@ export const HeroSlider: React.FC<HeroSliderProps> = ({ movies }) => {
         style={{ backgroundImage: `url(${currentMovie.backdropUrl})`, backgroundPosition: 'center top' }}
       >
         {/* Top gradient scrim */}
-        <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-black/40 to-transparent h-48" />
+        <div className="absolute inset-0 bg-gradient-to-b from-black/45 via-black/20 to-transparent h-48" />
 
-        {/* Heavy bottom radial and vertical shadow merging with #1e2129 */}
-        <div className="absolute inset-0 bg-gradient-to-t from-[#1e2129] via-[#1e2129]/80 to-transparent" />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#1e2129] via-[#1e2129]/60 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#1e2129] via-[#1e2129]/55 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-r from-[#1e2129]/80 via-[#1e2129]/35 to-transparent" />
       </div>
 
       {/* Hero Content Container */}
