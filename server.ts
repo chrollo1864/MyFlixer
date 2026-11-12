@@ -2290,7 +2290,7 @@ app.post('/api/admin/tmdb/import', async (req: Request, res: Response) => {
     slug: (title || `title-${Date.now()}`).toLowerCase().replace(/[^a-z0-9]+/g, '-'),
     type: mediaType,
     year: Number(String(details.release_date || details.first_air_date || '').slice(0, 4)) || year || 2024,
-    duration: mediaType === 'tv' ? `${details.episode_run_time?.[0] || 50} min/ep` : `${details.runtime || 0} min`,
+    duration: mediaType === 'tv' ? `${details.episode_run_time?.[0] || 50} min` : `${details.runtime || 0} min`,
     quality: 'HD' as const,
     rating: Number(details.vote_average ?? rating) || 0,
     ratingCount: Number(details.vote_count) || 0,

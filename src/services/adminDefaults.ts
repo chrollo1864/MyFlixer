@@ -18,7 +18,7 @@ export const DEFAULT_THEME_OPTIONS: ThemeOptionsConfig = {
   homepageSections: [
     { id: 'sec-hero', key: 'hero', title: 'Featured Hero Banner', enabled: true, itemsCount: 5, displayOrder: 1 },
     { id: 'sec-recommended', key: 'recommended', title: 'Recommended Titles', enabled: true, itemsCount: 7, displayOrder: 2 },
-    { id: 'sec-trending', key: 'trending', title: 'Trending Series', enabled: true, itemsCount: 7, displayOrder: 3 },
+    { id: 'sec-trending', key: 'trending', title: 'Trending Series', enabled: true, itemsCount: 14, displayOrder: 3 },
     { id: 'sec-latestMovies', key: 'latestMovies', title: 'Latest Movies', enabled: true, itemsCount: 14, displayOrder: 4 },
     { id: 'sec-a2z', key: 'a2z', title: 'A-Z Directory Navigation', enabled: true, itemsCount: 26, displayOrder: 5 },
     { id: 'sec-mostViewed', key: 'mostViewed', title: 'Sidebar Most Viewed', enabled: true, itemsCount: 8, displayOrder: 6 }
