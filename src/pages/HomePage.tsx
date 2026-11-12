@@ -38,7 +38,7 @@ export const HomePage: React.FC = () => {
       setFeaturedMovies(featured.slice(0, heroSec?.itemsCount || 5));
       setRecommendedMovies(recommended.slice(0, recSec?.itemsCount || 7));
       setLatestMovies(all.filter(m => m.type === 'movie').slice(0, latestMoviesSec?.itemsCount || 14));
-      setLatestTvShows(all.filter(m => m.type === 'tv').slice(0, trendingSec?.itemsCount || 7));
+      setLatestTvShows(all.filter(m => m.type === 'tv').slice(0, trendingSec?.itemsCount || 14));
     };
     loadData();
   }, [recommendedTab, heroSec?.itemsCount, recSec?.itemsCount, latestMoviesSec?.itemsCount, trendingSec?.itemsCount]);
