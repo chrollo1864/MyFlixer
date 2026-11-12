@@ -29,22 +29,10 @@ const SESSION_TTL_SECONDS = 60 * 60 * 8;
 
 app.use(express.json({ limit: '12mb' }));
 
-async function cacheTmdbImage(imagePath: unknown, kind: string, tmdbId: string): Promise<string> {
-  if (typeof imagePath !== 'string' || !imagePath.startsWith('/')) return '';
-  try {
-    const response = await fetch(`https://image.tmdb.org/t/p/${kind}${imagePath}`, { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) return '';
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > 15 * 1024 * 1024) return '';
-    const ext = imagePath.toLowerCase().match(/\.(jpg|jpeg|png|webp)$/)?.[1] || 'jpg';
-    const filename = `${tmdbId}-${kind}-${createHmac('sha256', SESSION_SECRET || 'local').update(imagePath).digest('hex').slice(0, 12)}.${ext}`;
-    await mkdir(mediaStorage, { recursive: true });
-    await writeFile(path.join(mediaStorage, filename), bytes);
-    return `/media/${filename}`;
-  } catch (error) {
-    console.warn('TMDB image cache failed:', error);
-    return '';
-  }
+function tmdbImageUrl(imagePath: unknown, size: string): string {
+  return typeof imagePath === 'string' && imagePath.startsWith('/')
+    ? `https://image.tmdb.org/t/p/${size}${imagePath}`
+    : '';
 }
 app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
 app.use(helmet({
@@ -308,6 +296,11 @@ interface MovieItem {
   synopsis: string;
   posterUrl: string;
   backdropUrl: string;
+  metadata?: {
+    poster_path?: unknown;
+    backdrop_path?: unknown;
+    seasons?: { season_number?: number; poster_path?: unknown }[];
+  };
   viewsCount: number;
   tags: string[];
   releaseDate: string;
@@ -329,6 +322,7 @@ interface MovieItem {
   seasons?: {
     seasonNumber: number;
     title?: string;
+    posterUrl?: string;
     episodes: {
       id?: string;
       episodeNumber: number;
@@ -356,6 +350,38 @@ interface MovieItem {
 
 const MOVIES_STORE: MovieItem[] = [];
 let catalogMetadataRefresh: Promise<void> | null = null;
+
+function restoreTmdbImageUrl(currentUrl: string | undefined, imagePath: unknown, size: string): string | undefined {
+  if (!currentUrl?.startsWith('/media/')) return currentUrl;
+  return tmdbImageUrl(imagePath, size) || currentUrl;
+}
+
+function restoreTmdbImageUrls(movie: MovieItem): boolean {
+  let changed = false;
+  const posterUrl = restoreTmdbImageUrl(movie.posterUrl, movie.metadata?.poster_path, 'w500');
+  const backdropUrl = restoreTmdbImageUrl(movie.backdropUrl, movie.metadata?.backdrop_path, 'original');
+  if (posterUrl !== movie.posterUrl) {
+    movie.posterUrl = posterUrl || '';
+    changed = true;
+  }
+  if (backdropUrl !== movie.backdropUrl) {
+    movie.backdropUrl = backdropUrl || '';
+    changed = true;
+  }
+
+  for (const season of movie.seasons || []) {
+    const metadataSeason = movie.metadata?.seasons?.find(item =>
+      Number(item.season_number) === season.seasonNumber
+    );
+    const seasonPosterUrl = restoreTmdbImageUrl(season.posterUrl, metadataSeason?.poster_path, 'w500');
+    if (seasonPosterUrl !== season.posterUrl) {
+      season.posterUrl = seasonPosterUrl;
+      changed = true;
+    }
+  }
+
+  return changed;
+}
 
 function publicMovie(movie: MovieItem): MovieItem {
   return {
@@ -417,6 +443,8 @@ async function refreshCatalogMetadataIfAvailable() {
         movie.genres = genres;
         movie.country = countries.join(', ');
         movie.countries = countries;
+        movie.posterUrl = tmdbImageUrl(details.poster_path, 'w500') || movie.posterUrl;
+        movie.backdropUrl = tmdbImageUrl(details.backdrop_path, 'original') || movie.backdropUrl;
         movie.metadataSource = 'tmdb';
         await database.query(
           'UPDATE myflixer_movies SET data = $2, updated_at = NOW() WHERE id = $1',
@@ -1462,6 +1490,12 @@ async function loadPersistentState() {
 
   MOVIES_STORE.splice(0, MOVIES_STORE.length, ...movieRows.rows.map((row: any) => row.data as MovieItem));
   for (const movie of MOVIES_STORE) {
+    if (restoreTmdbImageUrls(movie)) {
+      await database.query(
+        'UPDATE myflixer_movies SET data = $2, updated_at = NOW() WHERE id = $1',
+        [movie.id, movie]
+      );
+    }
     try { await persistImportedHierarchy(movie); }
     catch (error) { console.error(`Catalog relationship migration failed for ${movie.id}:`, error); }
   }
@@ -2050,8 +2084,7 @@ app.post('/api/admin/tmdb/refresh-image', async (req: Request, res: Response) =>
   }
 
   const size = field === 'posterUrl' ? 'w500' : 'original';
-  movie[field] = await cacheTmdbImage(imagePath, size, String(tmdbId))
-    || `https://image.tmdb.org/t/p/${size}${imagePath}`;
+  movie[field] = tmdbImageUrl(imagePath, size);
   await database.query(
     'UPDATE myflixer_movies SET data = $2, updated_at = NOW() WHERE id = $1',
     [movie.id, movie]
@@ -2222,7 +2255,7 @@ app.post('/api/admin/tmdb/import', async (req: Request, res: Response) => {
             overview: seasonData.overview || '',
             airDate: seasonData.air_date || '',
             episodeCount: (seasonData.episodes || []).length,
-            posterUrl: seasonData.poster_path ? (await cacheTmdbImage(seasonData.poster_path, 'w500', `${tmdbId}-season-${seasonNumber}`) || `https://image.tmdb.org/t/p/w500${seasonData.poster_path}`) : '',
+            posterUrl: tmdbImageUrl(seasonData.poster_path, 'w500'),
             episodes: await Promise.all((seasonData.episodes || []).map(async (episode: any) => ({
               id: `tmdb-${tmdbId}-s${seasonNumber}-e${episode.episode_number}`,
               tmdbId: String(episode.id || ''),
@@ -2231,7 +2264,7 @@ app.post('/api/admin/tmdb/import', async (req: Request, res: Response) => {
               title: episode.name || `Episode ${episode.episode_number}`,
               duration: episode.runtime ? `${episode.runtime} min` : '45 min',
               thumbnail: episode.still_path
-                ? (await cacheTmdbImage(episode.still_path, 'w500', `${tmdbId}-s${seasonNumber}-e${episode.episode_number}`) || `https://image.tmdb.org/t/p/w500${episode.still_path}`)
+                ? tmdbImageUrl(episode.still_path, 'w500')
                 : 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=400&auto=format&fit=crop',
               overview: episode.overview || '',
               airDate: episode.air_date || '',
@@ -2276,8 +2309,8 @@ app.post('/api/admin/tmdb/import', async (req: Request, res: Response) => {
     cast: (credits.cast || []).slice(0, 20).map((person: any) => person.name),
     production: (details.production_companies || []).map((company: any) => company.name).join(', '),
     synopsis: details.overview || overview || '',
-    posterUrl: await cacheTmdbImage(details.poster_path, 'w500', String(tmdbId)) || posterUrl || (details.poster_path ? `https://image.tmdb.org/t/p/w500${details.poster_path}` : ''),
-    backdropUrl: await cacheTmdbImage(details.backdrop_path, 'original', String(tmdbId)) || backdropUrl || (details.backdrop_path ? `https://image.tmdb.org/t/p/original${details.backdrop_path}` : ''),
+    posterUrl: tmdbImageUrl(details.poster_path, 'w500') || posterUrl || '',
+    backdropUrl: tmdbImageUrl(details.backdrop_path, 'original') || backdropUrl || '',
     viewsCount: 120,
     tags: ['tmdb', 'imported'],
     releaseDate: details.release_date || details.first_air_date || releaseDate || '',
