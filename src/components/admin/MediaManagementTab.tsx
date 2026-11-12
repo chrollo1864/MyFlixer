@@ -17,11 +17,26 @@ import {
   SlidersHorizontal,
   Bookmark
 } from 'lucide-react';
+import { api } from '../../services/api';
 import { Movie } from '../../types/movie';
 import { getCatalogCountries, getCatalogGenres } from '../../services/catalogOptions';
 
+const getPlaylistSourceType = (value: string): 'hls' | 'dash' | undefined => {
+  try {
+    const pathname = new URL(value).pathname.toLowerCase();
+    if (pathname.endsWith('.m3u8')) return 'hls';
+    if (pathname.endsWith('.mpd')) return 'dash';
+  } catch {
+    const trimmed = value.trim();
+    if (/\.m3u8(?:$|[?#])/i.test(trimmed)) return 'hls';
+    if (/\.mpd(?:$|[?#])/i.test(trimmed)) return 'dash';
+  }
+  return undefined;
+};
+
 interface MediaManagementTabProps {
   movies: Movie[];
+  apiKey: string;
   onAddMovie: (movie: Partial<Movie>) => Promise<void>;
   onUpdateMovie: (id: string, movie: Partial<Movie>) => Promise<void>;
   onDeleteMovie: (id: string) => Promise<void>;
@@ -30,6 +45,7 @@ interface MediaManagementTabProps {
 
 export const MediaManagementTab: React.FC<MediaManagementTabProps> = ({
   movies,
+  apiKey,
   onAddMovie,
   onUpdateMovie,
   onDeleteMovie,
@@ -62,6 +78,29 @@ export const MediaManagementTab: React.FC<MediaManagementTabProps> = ({
   const [formPosterUrl, setFormPosterUrl] = useState('');
   const [formBackdropUrl, setFormBackdropUrl] = useState('');
   const [formVideoUrl, setFormVideoUrl] = useState('');
+  const [formSources, setFormSources] = useState<Array<{id:string;name:string;url:string;sourceType:string;isDefault:boolean;isActive:boolean;clearKeyId?:string;clearKey?:string}>>([]);
+  const [formSeasons, setFormSeasons] = useState<NonNullable<Movie['seasons']>>([]);
+  const [formTmdbId, setFormTmdbId] = useState<string>();
+  const [tmdbQuery, setTmdbQuery] = useState('');
+  const [tmdbResults, setTmdbResults] = useState<Array<{tmdbId:number;title:string;type:'movie'|'tv';year:number;posterUrl:string;overview:string}>>([]);
+  const [isSearchingTmdb, setIsSearchingTmdb] = useState(false);
+  const [fetchingTmdbId, setFetchingTmdbId] = useState<number | null>(null);
+  const [tmdbError, setTmdbError] = useState('');
+  const [isSavingMedia, setIsSavingMedia] = useState(false);
+  const [formError, setFormError] = useState('');
+  const uploadImage = async (file: File | undefined, setter: (url: string) => void) => {
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type) || file.size > 8 * 1024 * 1024) {
+      window.alert('Choose a JPEG, PNG, or WebP image under 8 MB.'); return;
+    }
+    const image = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = reject; reader.readAsDataURL(file);
+    });
+    const response = await fetch('/api/admin/media-image', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image }) });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || 'Image upload failed.');
+    setter(result.url);
+  };
   const [formGenres, setFormGenres] = useState<string[]>(['Action']);
 
   // Filter movies
@@ -84,6 +123,12 @@ export const MediaManagementTab: React.FC<MediaManagementTabProps> = ({
 
   const openCreateModal = () => {
     setEditingMovie(null);
+    setFormTmdbId(undefined);
+    setTmdbQuery('');
+    setTmdbResults([]);
+    setTmdbError('');
+    setFormError('');
+    setIsSavingMedia(false);
     setFormTitle('');
     setFormType('movie');
     setFormYear(2024);
@@ -97,12 +142,19 @@ export const MediaManagementTab: React.FC<MediaManagementTabProps> = ({
     setFormPosterUrl('https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=600&auto=format&fit=crop');
     setFormBackdropUrl('https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=1600&auto=format&fit=crop');
     setFormVideoUrl('');
+    setFormSources([{ id: `source-${Date.now()}`, name: 'Source 1', url: '', sourceType: 'embed', isDefault: true, isActive: true }]);
+    setFormSeasons([]);
     setFormGenres(['Action']);
     setIsModalOpen(true);
   };
 
   const openEditModal = (movie: Movie) => {
     setEditingMovie(movie);
+    setFormTmdbId(movie.tmdbId);
+    setTmdbQuery('');
+    setTmdbResults([]);
+    setTmdbError('');
+    setFormError('');
     setFormTitle(movie.title);
     setFormType(movie.type);
     setFormYear(movie.year);
@@ -116,46 +168,138 @@ export const MediaManagementTab: React.FC<MediaManagementTabProps> = ({
     setFormPosterUrl(movie.posterUrl);
     setFormBackdropUrl(movie.backdropUrl);
     setFormVideoUrl(movie.videoSources?.[0]?.embedUrl || '');
+    setFormSources((movie.videoSources || []).map((source, index) => ({
+      id: source.id || `source-${index}`, name: source.name || `Source ${index + 1}`, url: source.embedUrl || '',
+      sourceType: source.sourceType || 'embed', isDefault: source.isDefault ?? index === 0, isActive: source.isActive !== false,
+      clearKeyId: source.clearKeyId || '', clearKey: source.clearKey || ''
+    })));
+    setFormSeasons(movie.seasons || []);
     setFormGenres(movie.genres);
     setIsModalOpen(true);
   };
 
+  const searchTmdbTitles = async () => {
+    const query = tmdbQuery.trim();
+    if (!query) {
+      setTmdbError('Enter a title to search TMDB.');
+      return;
+    }
+
+    setIsSearchingTmdb(true);
+    setTmdbError('');
+    setTmdbResults([]);
+    try {
+      const response = await api.searchTmdb(query, apiKey, formType, { genres: [], year: 'All', page: 1 });
+      setTmdbResults(response.results);
+      if (!response.results.length) setTmdbError('No matching titles found. Try a different search.');
+    } catch (error) {
+      setTmdbError(error instanceof Error ? error.message : 'TMDB search failed. Please try again.');
+    } finally {
+      setIsSearchingTmdb(false);
+    }
+  };
+
+  const fetchTmdbTitle = async (result: typeof tmdbResults[number]) => {
+    setFetchingTmdbId(result.tmdbId);
+    setTmdbError('');
+    try {
+      const movie = await api.fetchTmdbDetails({
+        tmdbId: result.tmdbId,
+        apiKey,
+        type: result.type,
+        previewOnly: true
+      });
+      setFormTmdbId(movie.tmdbId);
+      setFormTitle(movie.title);
+      setFormType(movie.type);
+      setFormYear(movie.year);
+      setFormDuration(movie.duration);
+      setFormRating(movie.rating);
+      setFormCountry(movie.country || '');
+      setFormDirector(movie.director || '');
+      setFormCast(movie.cast?.join(', ') || '');
+      setFormSynopsis(movie.synopsis || '');
+      setFormPosterUrl(movie.posterUrl || '');
+      setFormBackdropUrl(movie.backdropUrl || '');
+      setFormGenres(movie.genres || []);
+      setFormSeasons(movie.seasons || []);
+      setFormSources((movie.videoSources || []).map((source, index) => ({
+        id: source.id || `source-${index}`,
+        name: source.name || `Source ${index + 1}`,
+        url: source.embedUrl || '',
+        sourceType: source.sourceType || 'embed',
+        isDefault: source.isDefault ?? index === 0,
+        isActive: source.isActive !== false,
+        clearKeyId: source.clearKeyId || '',
+        clearKey: source.clearKey || ''
+      })));
+      setFormVideoUrl(movie.videoSources?.[0]?.embedUrl || '');
+      setTmdbResults([]);
+      setTmdbQuery('');
+    } catch (error) {
+      setTmdbError(error instanceof Error ? error.message : 'Could not fetch title details from TMDB.');
+    } finally {
+      setFetchingTmdbId(null);
+    }
+  };
+
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formTitle.trim()) return;
-
-    const payload: Partial<Movie> = {
-      title: formTitle.trim(),
-      type: formType,
-      year: formYear,
-      duration: formDuration,
-      quality: formQuality,
-      rating: formRating,
-      country: formCountry,
-      countries: formCountry.split(',').map(country => country.trim()).filter(Boolean),
-      director: formDirector,
-      cast: formCast.split(',').map(s => s.trim()).filter(Boolean),
-      synopsis: formSynopsis,
-      posterUrl: formPosterUrl,
-      backdropUrl: formBackdropUrl,
-      genres: formGenres,
-      videoSources: [
-        {
-          id: 'srv-1',
-          name: 'Server 1 (Default)',
-          quality: '1080p HD',
-          speed: 'Fast',
-          embedUrl: formVideoUrl.trim()
-        }
-      ]
-    };
-
-    if (editingMovie) {
-      await onUpdateMovie(editingMovie.id, payload);
-    } else {
-      await onAddMovie(payload);
+    if (!formTitle.trim() || isSavingMedia) return;
+    setFormError('');
+    const sourcesWithKeys = [
+      ...formSources,
+      ...formSeasons.flatMap(season => season.episodes.flatMap(episode => episode.videoSources || []))
+    ];
+    const invalidClearKey = sourcesWithKeys.find(source =>
+      source.sourceType === 'dash'
+      && (source.clearKeyId?.trim() || source.clearKey?.trim())
+      && (!/^[\da-f]{32}$/i.test(source.clearKeyId?.trim() || '')
+        || !/^[\da-f]{32}$/i.test(source.clearKey?.trim() || ''))
+    );
+    if (invalidClearKey) {
+      setFormError('For ClearKey DASH playback, enter both the KID and key as 32 hexadecimal characters each.');
+      return;
     }
-    setIsModalOpen(false);
+    setIsSavingMedia(true);
+
+    try {
+      const payload: Partial<Movie> = {
+        ...(formTmdbId ? { tmdbId: formTmdbId, metadataSource: 'tmdb' as const } : {}),
+        title: formTitle.trim(),
+        type: formType,
+        year: formYear,
+        duration: formDuration,
+        quality: formQuality,
+        rating: formRating,
+        country: formCountry,
+        countries: formCountry.split(',').map(country => country.trim()).filter(Boolean),
+        director: formDirector,
+        cast: formCast.split(',').map(s => s.trim()).filter(Boolean),
+        synopsis: formSynopsis,
+        posterUrl: formPosterUrl,
+        backdropUrl: formBackdropUrl,
+        genres: formGenres,
+        videoSources: formSources.filter(source => source.url.trim()).map(source => ({
+          id: source.id, name: source.name, quality: '1080p HD', speed: 'Fast', embedUrl: source.url.trim(),
+          sourceType: source.sourceType as any, isDefault: source.isDefault, isActive: source.isActive,
+          clearKeyId: source.clearKeyId?.trim() || undefined,
+          clearKey: source.clearKey?.trim() || undefined
+        })),
+        ...(formType === 'tv' ? { seasons: formSeasons } : {})
+      };
+
+      if (editingMovie) {
+        await onUpdateMovie(editingMovie.id, payload);
+      } else {
+        await onAddMovie(payload);
+      }
+      setIsModalOpen(false);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : 'Could not publish this title. Please try again.');
+    } finally {
+      setIsSavingMedia(false);
+    }
   };
 
   const handleConfirmDelete = async () => {
@@ -358,22 +502,89 @@ export const MediaManagementTab: React.FC<MediaManagementTabProps> = ({
       {/* Add / Edit Media Modal Dialog */}
       {isModalOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#242832] border border-[#3e4555] rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 shadow-2xl space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#2e3442]">
-              <h3 className="text-lg font-bold text-white flex items-center gap-2">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="media-editor-title"
+            className="flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-[#3e4555] bg-[#242832] shadow-2xl"
+          >
+            <div className="flex shrink-0 items-center justify-between gap-4 border-b border-[#2e3442] px-5 pb-3 pt-5 sm:px-6">
+              <h3 id="media-editor-title" className="flex min-w-0 items-center gap-2 text-lg font-bold text-white">
                 <Film className="w-5 h-5 text-[#db6937]" />
-                <span>{editingMovie ? `Edit Media: ${editingMovie.title}` : 'Add New Movie / TV Show'}</span>
+                <span className="truncate">{editingMovie ? `Edit Media: ${editingMovie.title}` : 'Add New Movie / TV Show'}</span>
               </h3>
               <button
+                type="button"
                 onClick={() => setIsModalOpen(false)}
-                className="text-neutral-400 hover:text-white p-1 rounded-full hover:bg-[#1a1c23]"
+                aria-label="Close media editor"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-neutral-400 transition-colors hover:bg-[#1a1c23] hover:text-white"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleFormSubmit} className="space-y-4 text-xs">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <form onSubmit={handleFormSubmit} className="flex min-h-0 flex-1 flex-col text-xs">
+              <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4 sm:px-6">
+                {!editingMovie && (
+                  <section className="space-y-3 rounded-2xl border border-[#4f83d3]/30 bg-[#1a1c23] p-3.5">
+                    <div className="flex items-start gap-2">
+                      <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-[#db6937]" />
+                      <div>
+                        <h4 className="font-semibold text-white">Import details from TMDB</h4>
+                        <p className="mt-0.5 text-[11px] text-[#b2b1ad]">Search for a title to fill in its metadata, artwork, cast, and TV episodes.</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-col gap-2 sm:flex-row">
+                      <input
+                        type="search"
+                        value={tmdbQuery}
+                        onChange={event => setTmdbQuery(event.target.value)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault();
+                            void searchTmdbTitles();
+                          }
+                        }}
+                        placeholder="Search movies or series..."
+                        aria-label="Search TMDB titles"
+                        className="min-w-0 flex-1 rounded-xl border border-[#3e4555] bg-[#242832] px-3 py-2.5 text-white placeholder:text-[#858b98]"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void searchTmdbTitles()}
+                        disabled={isSearchingTmdb || fetchingTmdbId !== null}
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl bg-[#343b4a] px-4 py-2.5 font-semibold text-white transition-colors hover:bg-[#414b5e] disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        <Search className="h-4 w-4" />
+                        {isSearchingTmdb ? 'Searching…' : 'Search TMDB'}
+                      </button>
+                    </div>
+                    {tmdbError && <p role="status" className="text-[11px] text-amber-300">{tmdbError}</p>}
+                    {tmdbResults.length > 0 && (
+                      <div className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
+                        {tmdbResults.map(result => (
+                          <button
+                            key={`${result.type}-${result.tmdbId}`}
+                            type="button"
+                            onClick={() => void fetchTmdbTitle(result)}
+                            disabled={fetchingTmdbId !== null}
+                            className="flex w-full min-w-0 items-center gap-3 rounded-xl border border-transparent bg-[#242832] p-2 text-left transition-colors hover:border-[#4f83d3]/50 hover:bg-[#292d38] disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            <img src={result.posterUrl} alt="" className="h-14 w-10 shrink-0 rounded-md bg-[#1a1c23] object-cover" />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-semibold text-white">{result.title}</span>
+                              <span className="mt-0.5 block text-[10px] capitalize text-[#b2b1ad]">{result.type === 'tv' ? 'TV Series' : 'Movie'} · {result.year || 'Year unknown'}</span>
+                            </span>
+                            <span className="shrink-0 text-[10px] font-semibold text-[#8ab4ff]">
+                              {fetchingTmdbId === result.tmdbId ? 'Fetching…' : 'Use details'}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+                )}
+                <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
                 <div className="sm:col-span-2 space-y-1">
                   <label className="font-semibold text-white">Title *</label>
                   <input
@@ -484,17 +695,99 @@ export const MediaManagementTab: React.FC<MediaManagementTabProps> = ({
                     onChange={(e) => setFormPosterUrl(e.target.value)}
                     className="w-full bg-[#1a1c23] border border-[#3e4555] rounded-xl p-2.5 text-white font-mono text-[11px]"
                   />
+                  <input aria-label="Upload custom poster" type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>void uploadImage(e.target.files?.[0],setFormPosterUrl).catch(error=>window.alert(error.message))} className="block w-full text-[11px] text-[#b2b1ad]" />
                 </div>
 
                 <div className="sm:col-span-2 space-y-1">
-                  <label className="font-semibold text-white">Streaming Video URL (Embed or HLS)</label>
-                  <input
-                    type="text"
-                    value={formVideoUrl}
-                    onChange={(e) => setFormVideoUrl(e.target.value)}
-                    className="w-full bg-[#1a1c23] border border-[#3e4555] rounded-xl p-2.5 text-white font-mono text-[11px]"
-                  />
+                  <label className="font-semibold text-white">Backdrop Image URL</label>
+                  <input type="text" value={formBackdropUrl} onChange={e=>setFormBackdropUrl(e.target.value)} className="w-full bg-[#1a1c23] border border-[#3e4555] rounded-xl p-2.5 text-white font-mono text-[11px]" />
+                  <input aria-label="Upload custom backdrop" type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>void uploadImage(e.target.files?.[0],setFormBackdropUrl).catch(error=>window.alert(error.message))} className="block w-full text-[11px] text-[#b2b1ad]" />
                 </div>
+
+                <section className="sm:col-span-2 min-w-0 rounded-xl border border-[#3e4555] bg-[#1a1c23] p-3 space-y-3">
+                  <div className="flex items-center justify-between"><label className="font-semibold text-white">Playback sources</label>
+                    <button type="button" onClick={() => setFormSources(rows => [...rows, {id:`source-${Date.now()}`,name:`Source ${rows.length+1}`,url:'',sourceType:'embed',isDefault:rows.length===0,isActive:true}])} className="rounded-lg bg-[#343b4a] px-2.5 py-1.5 text-white">Add source</button>
+                  </div>
+                  {formSources.map((source, index) => <div key={source.id} className="grid min-w-0 grid-cols-1 gap-2 rounded-lg border border-[#343b4a] p-2 sm:grid-cols-2">
+                    <input aria-label="Source name" value={source.name} onChange={e=>setFormSources(rows=>rows.map((row,i)=>i===index?{...row,name:e.target.value}:row))} placeholder="Name" className="w-full min-w-0 rounded-lg bg-[#242832] p-2 text-white" />
+                    <input aria-label="Streaming URL" type="url" value={source.url} onChange={e=>setFormSources(rows=>rows.map((row,i)=>i===index?{...row,url:e.target.value,sourceType:getPlaylistSourceType(e.target.value) || row.sourceType}:row))} placeholder="https://..." className="w-full min-w-0 rounded-lg bg-[#242832] p-2 font-mono text-white" />
+                    <select aria-label="Source type" value={source.sourceType} onChange={e=>setFormSources(rows=>rows.map((row,i)=>i===index?{...row,sourceType:e.target.value}:row))} className="w-full min-w-0 rounded-lg bg-[#242832] p-2 text-white">
+                      <option value="direct">Direct video file</option><option value="hls">Shaka HLS playlist (.m3u8)</option><option value="dash">Shaka MPEG-DASH playlist (.mpd)</option><option value="embed">Embedded player page</option><option value="hosted">Hosted player page</option>
+                    </select>
+                    <p className="sm:col-span-2 text-[10px] leading-relaxed text-[#858b98]">
+                      Shaka plays browser-accessible HLS (.m3u8) and DASH (.mpd) manifests. The stream must allow browser access; DRM-protected streams require the provider’s licensed player.
+                    </p>
+                    {source.sourceType === 'dash' && (
+                      <>
+                        <input
+                          aria-label="ClearKey key ID in hexadecimal"
+                          value={source.clearKeyId || ''}
+                          onChange={event => setFormSources(rows => rows.map((row, i) => i === index ? { ...row, clearKeyId: event.target.value.trim() } : row))}
+                          placeholder="ClearKey KID (32 hex characters)"
+                          autoComplete="off"
+                          spellCheck={false}
+                          className="w-full min-w-0 rounded-lg bg-[#242832] p-2 font-mono text-white"
+                        />
+                        <input
+                          aria-label="ClearKey content key in hexadecimal"
+                          type="password"
+                          value={source.clearKey || ''}
+                          onChange={event => setFormSources(rows => rows.map((row, i) => i === index ? { ...row, clearKey: event.target.value.trim() } : row))}
+                          placeholder="ClearKey (32 hex characters)"
+                          autoComplete="new-password"
+                          spellCheck={false}
+                          className="w-full min-w-0 rounded-lg bg-[#242832] p-2 font-mono text-white"
+                        />
+                        <p className="sm:col-span-2 text-[10px] leading-relaxed text-amber-200/80">
+                          ClearKey is for content you own or are authorized to serve. The key must reach the browser to play and can be inspected by viewers; don’t use it for secrets or third-party DRM.
+                        </p>
+                      </>
+                    )}
+                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                      <label className="flex items-center gap-1 text-white"><input type="checkbox" checked={source.isDefault} onChange={e=>setFormSources(rows=>rows.map((row,i)=>({...row,isDefault:i===index?e.target.checked:false})))} />Default</label>
+                      <label className="flex items-center gap-1 text-white"><input type="checkbox" checked={source.isActive} onChange={e=>setFormSources(rows=>rows.map((row,i)=>i===index?{...row,isActive:e.target.checked}:row))} />Active</label>
+                      <button type="button" onClick={()=>setFormSources(rows=>rows.filter((_,i)=>i!==index))} className="text-rose-300">Delete</button>
+                    </div>
+                  </div>)}
+                </section>
+
+                {formType === 'tv' && <section className="sm:col-span-2 min-w-0 rounded-xl border border-[#3e4555] bg-[#1a1c23] p-3 space-y-3">
+                  <div className="flex items-center justify-between"><label className="font-semibold text-white">Seasons and episode sources</label>
+                    <button type="button" onClick={()=>setFormSeasons(rows=>[...rows,{seasonNumber:rows.length+1,title:`Season ${rows.length+1}`,episodes:[]}])} className="rounded-lg bg-[#343b4a] px-2.5 py-1.5 text-white">Add season</button>
+                  </div>
+                  {formSeasons.map((season,si)=><details key={`${season.seasonNumber}-${si}`} className="min-w-0 rounded-lg border border-[#343b4a] p-2" open>
+                    <summary className="cursor-pointer text-white font-semibold">Season {season.seasonNumber}: {season.title}</summary>
+                    <div className="space-y-2 mt-2">
+                      <div className="flex gap-2"><input aria-label="Season name" value={season.title} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,title:e.target.value}:s))} className="flex-1 rounded-lg bg-[#242832] p-2 text-white" />
+                        <button type="button" onClick={()=>setFormSeasons(rows=>rows.filter((_,i)=>i!==si))} className="px-2 text-rose-300">Delete season</button></div>
+                      <textarea aria-label="Season description" value={season.overview || ''} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,overview:e.target.value}:s))} placeholder="Season description" className="w-full rounded-lg bg-[#242832] p-2 text-white" />
+                      <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2"><input aria-label="Season air date" type="date" value={season.airDate || ''} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,airDate:e.target.value}:s))} className="w-full min-w-0 rounded-lg bg-[#242832] p-2 text-white" />
+                        <input aria-label="Season poster URL" value={season.posterUrl || ''} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,posterUrl:e.target.value}:s))} placeholder="Season poster URL" className="w-full min-w-0 rounded-lg bg-[#242832] p-2 font-mono text-white" /></div>
+                      {season.episodes.map((episode,ei)=><div key={episode.id || `${si}-${ei}`} className="min-w-0 space-y-2 rounded-lg bg-[#242832] p-2">
+                        <div className="grid min-w-0 grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(4rem,0.35fr)_minmax(0,1fr)_auto]"><input aria-label="Episode number" type="number" value={episode.episodeNumber} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,episodeNumber:Number(e.target.value)}:ep)}:s))} className="w-full min-w-0 rounded-lg bg-[#1a1c23] p-2 text-white" />
+                          <input aria-label="Episode title" value={episode.title} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,title:e.target.value}:ep)}:s))} className="w-full min-w-0 rounded-lg bg-[#1a1c23] p-2 text-white" />
+                          <button type="button" onClick={()=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.filter((_,j)=>j!==ei)}:s))} className="justify-self-start text-rose-300">Delete episode</button></div>
+                        <textarea aria-label="Episode description" value={episode.overview || ''} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,overview:e.target.value}:ep)}:s))} placeholder="Episode description" className="w-full rounded-lg bg-[#1a1c23] p-2 text-white" />
+                        <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2"><input aria-label="Episode runtime" value={episode.duration || ''} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,duration:e.target.value}:ep)}:s))} placeholder="Runtime" className="w-full min-w-0 rounded-lg bg-[#1a1c23] p-2 text-white" />
+                          <input aria-label="Episode thumbnail path" value={episode.thumbnail || ''} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,thumbnail:e.target.value}:ep)}:s))} placeholder="Thumbnail URL" className="w-full min-w-0 rounded-lg bg-[#1a1c23] p-2 font-mono text-white" />
+                          <input aria-label="Upload episode thumbnail" type="file" accept="image/jpeg,image/png,image/webp" onChange={e=>void uploadImage(e.target.files?.[0],url=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,thumbnail:url}:ep)}:s))).catch(error=>window.alert(error.message))} className="max-w-full text-[11px] text-[#b2b1ad]" /></div>
+                        {(episode.videoSources || []).map((source,xi)=><div key={source.id} className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+                          <input aria-label="Episode source name" value={source.name} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,videoSources:ep.videoSources?.map((x,k)=>k===xi?{...x,name:e.target.value}:x)}:ep)}:s))} className="w-full min-w-0 rounded-lg bg-[#1a1c23] p-2 text-white" />
+                          <input aria-label="Episode source URL" type="url" value={source.embedUrl} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,videoSources:ep.videoSources?.map((x,k)=>k===xi?{...x,embedUrl:e.target.value,sourceType:getPlaylistSourceType(e.target.value) || x.sourceType}:x)}:ep)}:s))} placeholder="https://..." className="w-full min-w-0 rounded-lg bg-[#1a1c23] p-2 font-mono text-white" />
+                          <div className="flex min-w-0 gap-2"><select aria-label="Episode source type" value={source.sourceType || 'embed'} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,videoSources:ep.videoSources?.map((x,k)=>k===xi?{...x,sourceType:e.target.value as any}:x)}:ep)}:s))} className="min-w-0 flex-1 rounded-lg bg-[#1a1c23] p-2 text-white"><option value="direct">Direct video</option><option value="hls">Shaka HLS (.m3u8)</option><option value="dash">Shaka DASH (.mpd)</option><option value="embed">Embedded player</option><option value="hosted">Hosted player</option></select><button type="button" onClick={()=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,videoSources:ep.videoSources?.filter((_,k)=>k!==xi)}:ep)}:s))} className="text-rose-300">×</button></div>
+                          {source.sourceType === 'dash' && (
+                            <>
+                              <input aria-label="Episode ClearKey key ID in hexadecimal" value={source.clearKeyId || ''} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,videoSources:ep.videoSources?.map((x,k)=>k===xi?{...x,clearKeyId:e.target.value.trim()}:x)}:ep)}:s))} placeholder="ClearKey KID (32 hex characters)" autoComplete="off" spellCheck={false} className="w-full min-w-0 rounded-lg bg-[#1a1c23] p-2 font-mono text-white" />
+                              <input aria-label="Episode ClearKey content key in hexadecimal" type="password" value={source.clearKey || ''} onChange={e=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,videoSources:ep.videoSources?.map((x,k)=>k===xi?{...x,clearKey:e.target.value.trim()}:x)}:ep)}:s))} placeholder="ClearKey (32 hex characters)" autoComplete="new-password" spellCheck={false} className="w-full min-w-0 rounded-lg bg-[#1a1c23] p-2 font-mono text-white" />
+                            </>
+                          )}
+                        </div>)}
+                        <button type="button" onClick={()=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:s.episodes.map((ep,j)=>j===ei?{...ep,videoSources:[...(ep.videoSources||[]),{id:`ep-src-${Date.now()}`,name:`Source ${(ep.videoSources?.length||0)+1}`,quality:'HD',speed:'',embedUrl:'',sourceType:'embed',isDefault:(ep.videoSources?.length||0)===0,isActive:true}]}:ep)}:s))} className="text-[#8ab4ff]">Add episode source</button>
+                      </div>)}
+                      <button type="button" onClick={()=>setFormSeasons(rows=>rows.map((s,i)=>i===si?{...s,episodes:[...s.episodes,{id:`manual-s${s.seasonNumber}-e${s.episodes.length+1}`,seasonNumber:s.seasonNumber,episodeNumber:s.episodes.length+1,title:`Episode ${s.episodes.length+1}`,duration:'',thumbnail:'',videoSources:[]}]}:s))} className="text-[#8ab4ff]">Add episode</button>
+                    </div>
+                  </details>)}
+                </section>}
 
                 <div className="sm:col-span-2 space-y-1">
                   <label className="font-semibold text-white">Storyline / Synopsis</label>
@@ -506,21 +799,27 @@ export const MediaManagementTab: React.FC<MediaManagementTabProps> = ({
                   />
                 </div>
               </div>
+              </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#2e3442]">
+              <div className="shrink-0 border-t border-[#2e3442] bg-[#242832] px-5 py-4 shadow-[0_-8px_20px_rgb(0_0_0/0.18)] sm:px-6">
+                {formError && <p role="alert" className="mb-3 rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-[11px] text-rose-200">{formError}</p>}
+                <div className="flex items-center justify-end gap-3">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
+                  disabled={isSavingMedia}
                   className="px-4 py-2 rounded-xl bg-[#1a1c23] text-[#b2b1ad] hover:text-white"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl bg-gradient-flixer text-white font-bold shadow hover:opacity-95"
+                  disabled={isSavingMedia}
+                  className="inline-flex min-w-36 items-center justify-center gap-2 rounded-xl bg-gradient-flixer px-5 py-2 font-bold text-white shadow hover:opacity-95 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {editingMovie ? 'Save Changes' : 'Publish to Catalog'}
+                  {isSavingMedia ? 'Publishing…' : editingMovie ? 'Save Changes' : 'Publish to Catalog'}
                 </button>
+                </div>
               </div>
             </form>
           </div>

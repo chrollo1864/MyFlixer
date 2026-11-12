@@ -4,7 +4,7 @@ import { ThemeOptionsConfig } from '../types/admin';
 import { DEFAULT_THEME_OPTIONS } from '../services/adminDefaults';
 import { api } from '../services/api';
 
-export type AppView = 'home' | 'watch' | 'browse' | 'watchlist' | 'account' | 'privacy' | 'terms' | 'admin' | 'not-found';
+export type AppView = 'home' | 'watch' | 'browse' | 'watchlist' | 'account' | 'subscription' | 'privacy' | 'terms' | 'admin' | 'not-found';
 
 interface AppContextType {
   currentView: AppView;
@@ -149,7 +149,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       let active = true;
       api.getMovieByIdOrSlug(selectedMovieId).then(movie => {
         if (!active) return;
-        const playableSeasons = movie?.seasons?.filter(season => season.seasonNumber > 0) || [];
+        const playableSeasons = movie?.seasons || [];
         setSelectedMovie(movie ? { ...movie, seasons: playableSeasons } : null);
         setSelectedSeasonNumber(playableSeasons[0]?.seasonNumber || 1);
         if (playableSeasons.length > 0) {
@@ -198,6 +198,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       } else if (path === '/account') {
         setSelectedMovieId(null);
         setCurrentView('account');
+      } else if (path === '/subscription') {
+        setSelectedMovieId(null);
+        setCurrentView('subscription');
       } else if (path === '/privacy-policy') {
         setSelectedMovieId(null);
         setCurrentView('privacy');
@@ -251,6 +254,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       setCurrentView('admin');
       setSelectedMovieId(null);
       window.history.pushState(null, '', '/admin');
+    } else if (view === 'subscription') {
+      setCurrentView('subscription');
+      setSelectedMovieId(null);
+      window.history.pushState(null, '', '/subscription');
     } else if (view === 'privacy' || view === 'terms') {
       setCurrentView(view);
       setSelectedMovieId(null);
@@ -281,7 +288,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateWatchProgress = (movieId: string, percent: number, season?: number, episode?: number) => {
     setWatchHistory(prev => {
-      const filtered = prev.filter(item => item.movieId !== movieId);
+      const samePlayback = (item: typeof prev[number]) => item.movieId === movieId
+        && item.season === season && item.episode === episode;
+      const filtered = prev.filter(item => !samePlayback(item));
       const updated = [
         {
           movieId,

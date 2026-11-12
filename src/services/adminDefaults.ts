@@ -12,7 +12,8 @@ export const DEFAULT_THEME_OPTIONS: ThemeOptionsConfig = {
     defaultThemeMode: 'dark',
     maintenanceMode: false,
     registrationEnabled: false,
-    guestBrowsingEnabled: true
+    guestBrowsingEnabled: true,
+    subscriptionModeEnabled: false
   },
   homepageSections: [
     { id: 'sec-hero', key: 'hero', title: 'Featured Hero Banner', enabled: true, itemsCount: 5, displayOrder: 1 },
@@ -105,5 +106,13 @@ export const DEFAULT_THEME_OPTIONS: ThemeOptionsConfig = {
     sidebarAdHtml: '<div class="p-4 bg-neutral-800 text-neutral-400 text-center text-xs rounded-xl">Authorized Sidebar Advertisement Placement (300x250)</div>',
     playerAdEnabled: false,
     playerAdHtml: '<div class="p-2 bg-neutral-900 text-neutral-400 text-center text-xs rounded-lg">Pre-roll Banner Placement</div>'
+  },
+  subscriptionPayments: {
+    gcashDisplayName: '',
+    gcashAccountNumber: '',
+    gcashQrImageUrl: '',
+    mayaDisplayName: '',
+    mayaAccountNumber: '',
+    mayaQrImageUrl: ''
   }
 };

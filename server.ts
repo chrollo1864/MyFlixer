@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { createServer as createHttpServer } from 'http';
 import path from 'path';
+import { mkdir, writeFile } from 'fs/promises';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import 'express-async-errors';
@@ -11,11 +12,13 @@ import { promisify } from 'util';
 import nodemailer from 'nodemailer';
 import { database, initializeDatabase } from './src/services/database.ts';
 import { buildEmbedUrl } from './src/services/embedUrl.ts';
+import { SUBSCRIPTION_PLANS } from './src/services/subscriptionPlans.ts';
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const mediaStorage = path.join(__dirname, 'storage', 'media');
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
@@ -24,7 +27,25 @@ const SESSION_SECRET = process.env.SESSION_SECRET || '';
 const SESSION_COOKIE = process.env.NODE_ENV === 'production' ? '__Host-myflixer_session' : 'myflixer_session';
 const SESSION_TTL_SECONDS = 60 * 60 * 8;
 
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '12mb' }));
+
+async function cacheTmdbImage(imagePath: unknown, kind: string, tmdbId: string): Promise<string> {
+  if (typeof imagePath !== 'string' || !imagePath.startsWith('/')) return '';
+  try {
+    const response = await fetch(`https://image.tmdb.org/t/p/${kind}${imagePath}`, { signal: AbortSignal.timeout(15000) });
+    if (!response.ok) return '';
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > 15 * 1024 * 1024) return '';
+    const ext = imagePath.toLowerCase().match(/\.(jpg|jpeg|png|webp)$/)?.[1] || 'jpg';
+    const filename = `${tmdbId}-${kind}-${createHmac('sha256', SESSION_SECRET || 'local').update(imagePath).digest('hex').slice(0, 12)}.${ext}`;
+    await mkdir(mediaStorage, { recursive: true });
+    await writeFile(path.join(mediaStorage, filename), bytes);
+    return `/media/${filename}`;
+  } catch (error) {
+    console.warn('TMDB image cache failed:', error);
+    return '';
+  }
+}
 app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
 app.use(helmet({
   crossOriginEmbedderPolicy: false,
@@ -38,19 +59,25 @@ app.use(helmet({
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
       imgSrc: ["'self'", 'data:', 'https:'],
+      mediaSrc: ["'self'", 'https:', 'blob:'],
       frameSrc: ["'self'", 'https:'],
-      connectSrc: ["'self'", ...(process.env.NODE_ENV !== 'production' ? ['ws:', 'wss:'] : [])],
+      connectSrc: ["'self'", 'https:', ...(process.env.NODE_ENV !== 'production' ? ['ws:', 'wss:'] : [])],
+      workerSrc: ["'self'", 'blob:'],
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
       frameAncestors: ["'self'"]
     }
   }
 }));
+app.use('/media', express.static(mediaStorage, { maxAge: '7d', immutable: true }));
 
 app.use('/api/auth/login', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false }));
 app.use('/api/auth/register', rateLimit({ windowMs: 60 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false }));
 app.use('/api/auth/register/verify', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false }));
 app.use('/api/auth/register/resend', rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false }));
+app.use('/api/auth/password-reset/request', rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false }));
+app.use('/api/auth/password-reset/verify', rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-7', legacyHeaders: false }));
+app.use('/api/auth/password-reset/complete', rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: 'draft-7', legacyHeaders: false }));
 
 interface SessionUser {
   username: string;
@@ -173,6 +200,10 @@ function hashRegistrationCode(email: string, code: string) {
   return createHmac('sha256', SESSION_SECRET).update(`${email}:${code}`).digest('hex');
 }
 
+function hashPasswordResetToken(email: string, token: string) {
+  return createHmac('sha256', SESSION_SECRET).update(`password-reset:${email}:${token}`).digest('hex');
+}
+
 function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505';
 }
@@ -185,6 +216,17 @@ async function sendRegistrationCode(email: string, code: string, mailer = getReg
     subject: 'Verify your MyFlixer account',
     text: `Your MyFlixer verification code is ${code}. It expires in 10 minutes. If you did not request this, you can ignore this email.`,
     html: `<p>Your MyFlixer verification code is:</p><p style="font-size:28px;font-weight:bold;letter-spacing:6px">${code}</p><p>This code expires in 10 minutes. If you did not request this, you can ignore this email.</p>`
+  });
+}
+
+async function sendPasswordResetCode(email: string, code: string, mailer = getRegistrationMailer()) {
+  const { from, transporter } = mailer;
+  await transporter.sendMail({
+    from,
+    to: email,
+    subject: 'Reset your MyFlixer password',
+    text: `Your MyFlixer password reset code is ${code}. It expires in 10 minutes. If you did not request this, you can ignore this email.`,
+    html: `<p>Your MyFlixer password reset code is:</p><p style="font-size:28px;font-weight:bold;letter-spacing:6px">${code}</p><p>This code expires in 10 minutes. If you did not request this, you can ignore this email.</p>`
   });
 }
 
@@ -202,6 +244,46 @@ function requireAuthenticated(req: Request, res: Response, next: express.NextFun
   const account = user && USERS_STORE[user.username];
   if (!account || account.status !== 'active') return res.status(401).json({ error: 'Sign in required.' });
   next();
+}
+
+async function checkPlaybackAccess(req: Request): Promise<{ status: 401 | 403; error: string; code: string } | null> {
+  const session = getSessionUser(req);
+  const settingsResult = await database.query(
+    `SELECT
+      COALESCE((data->'general'->>'subscriptionModeEnabled')::boolean, false) AS subscription_mode_enabled,
+      COALESCE((data->'general'->>'guestBrowsingEnabled')::boolean, true) AS guest_browsing_enabled
+     FROM myflixer_site_settings
+     WHERE key = 'primary'`
+  );
+  const subscriptionModeEnabled = settingsResult.rows[0]?.subscription_mode_enabled === true;
+  const guestBrowsingEnabled = settingsResult.rows[0]?.guest_browsing_enabled !== false;
+  const accountResult = session
+    ? await database.query(
+      `SELECT u.status, s.status AS subscription_status, s.expires_at
+       FROM myflixer_users u
+       LEFT JOIN myflixer_subscriptions s ON s.username = u.username
+       WHERE u.username = $1`,
+      [session.username]
+    )
+    : null;
+  const account = accountResult?.rows[0];
+
+  if (session && (!account || account.status !== 'active')) {
+    return { status: 401, error: 'Sign in with an active account to watch.', code: 'AUTH_REQUIRED' };
+  }
+  if (subscriptionModeEnabled && !account) {
+    return { status: 401, error: 'Sign in and subscribe to watch this title.', code: 'AUTH_REQUIRED' };
+  }
+  if (subscriptionModeEnabled && (
+    account.subscription_status !== 'active'
+    || (account.expires_at && new Date(account.expires_at).getTime() <= Date.now())
+  )) {
+    return { status: 403, error: 'An active subscription is required to watch this title.', code: 'SUBSCRIPTION_REQUIRED' };
+  }
+  if (!subscriptionModeEnabled && !account && !guestBrowsingEnabled) {
+    return { status: 401, error: 'Sign in to watch this title.', code: 'AUTH_REQUIRED' };
+  }
+  return null;
 }
 
 // Catalog cache is hydrated from PostgreSQL before the server accepts requests.
@@ -238,6 +320,11 @@ interface MovieItem {
     quality: string;
     speed: string;
     embedUrl: string;
+    sourceType?: 'direct' | 'hls' | 'dash' | 'embed' | 'hosted';
+    isDefault?: boolean;
+    isActive?: boolean;
+    clearKeyId?: string;
+    clearKey?: string;
   }[];
   seasons?: {
     seasonNumber: number;
@@ -251,12 +338,53 @@ interface MovieItem {
       thumbnail?: string;
       overview?: string;
       embedUrl: string;
+      videoSources?: {
+        id: string;
+        name: string;
+        quality: string;
+        speed: string;
+        embedUrl: string;
+        sourceType?: 'direct' | 'hls' | 'dash' | 'embed' | 'hosted';
+        isDefault?: boolean;
+        isActive?: boolean;
+        clearKeyId?: string;
+        clearKey?: string;
+      }[];
     }[];
   }[];
 }
 
 const MOVIES_STORE: MovieItem[] = [];
 let catalogMetadataRefresh: Promise<void> | null = null;
+
+function publicMovie(movie: MovieItem): MovieItem {
+  return {
+    ...movie,
+    videoSources: Array.isArray(movie.videoSources)
+      ? movie.videoSources.map(source => {
+        const { embedUrl: _embedUrl, clearKey: _clearKey, ...metadata } = source;
+        return { ...metadata, embedUrl: '' };
+      })
+      : [],
+    seasons: Array.isArray(movie.seasons) ? movie.seasons.map(season => ({
+      ...season,
+      episodes: (Array.isArray(season.episodes) ? season.episodes : []).map(episode => {
+        const { embedUrl: _embedUrl, videoUrl: _videoUrl, ...metadata } = episode as typeof episode & { videoUrl?: string };
+        const videoSources = (episode as typeof episode & { videoSources?: MovieItem['videoSources'] }).videoSources;
+        return {
+          ...metadata,
+          embedUrl: '',
+          ...(Array.isArray(videoSources) ? {
+            videoSources: videoSources.map(source => {
+              const { embedUrl: _sourceUrl, clearKey: _clearKey, ...sourceMetadata } = source;
+              return { ...sourceMetadata, embedUrl: '' };
+            })
+          } : {})
+        };
+      })
+    })) : undefined
+  };
+}
 
 async function refreshCatalogMetadataIfAvailable() {
   const apiKey = process.env.TMDB_API_KEY || CURRENT_THEME_OPTIONS.tmdb?.apiKey;
@@ -394,13 +522,13 @@ app.get('/api/movies', async (req: Request, res: Response) => {
 
   res.json({
     total: results.length,
-    movies: results
+    movies: results.map(publicMovie)
   });
 });
 
 app.get('/api/movies/featured', (_req: Request, res: Response) => {
   const featured = MOVIES_STORE.filter(m => m.isFeatured);
-  res.json(featured);
+  res.json(featured.map(publicMovie));
 });
 
 app.get('/api/movies/recommended', (req: Request, res: Response) => {
@@ -409,12 +537,12 @@ app.get('/api/movies/recommended', (req: Request, res: Response) => {
   if (tab === 'movies') items = items.filter(m => m.type === 'movie');
   if (tab === 'tv') items = items.filter(m => m.type === 'tv');
   if (tab === 'trending') items = items.filter(m => m.isTrending);
-  res.json(items);
+  res.json(items.map(publicMovie));
 });
 
 app.get('/api/movies/most-viewed', (_req: Request, res: Response) => {
   const sorted = [...MOVIES_STORE].sort((a, b) => b.viewsCount - a.viewsCount).slice(0, 8);
-  res.json(sorted);
+  res.json(sorted.map(publicMovie));
 });
 
 app.get('/api/movies/:id', async (req: Request, res: Response) => {
@@ -428,7 +556,136 @@ app.get('/api/movies/:id', async (req: Request, res: Response) => {
     [movie.id]
   );
   if (updated.rows[0]) Object.assign(movie, updated.rows[0].data);
-  res.json(movie);
+  res.json(publicMovie(movie));
+});
+
+app.post('/api/playback/authorize', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const accessError = await checkPlaybackAccess(req);
+  if (accessError) return res.status(accessError.status).json({ error: accessError.error, code: accessError.code });
+
+  const movie = MOVIES_STORE.find(item => item.id === req.body.movieId || item.slug === req.body.movieId);
+  if (!movie) return res.status(404).json({ error: 'Title not found.' });
+
+  const serverId = typeof req.body.serverId === 'string' ? req.body.serverId : '';
+  const seasonNumber = Number(req.body.season);
+  const episodeNumber = Number(req.body.episode);
+  const selectedEpisode = movie.type === 'tv'
+    ? movie.seasons?.find(item => item.seasonNumber === seasonNumber)?.episodes.find(entry => entry.episodeNumber === episodeNumber)
+    : undefined;
+  if (movie.type === 'tv' && !selectedEpisode) {
+    return res.status(400).json({ error: 'Select a valid episode.' });
+  }
+
+  const episodeSource = (selectedEpisode as any)?.videoSources?.find((item: any) =>
+    item.id === serverId && item.isActive !== false
+  );
+  const titleSource = episodeSource || movie.videoSources.find((item: any) =>
+    item.id === serverId && item.isActive !== false
+  );
+  let embedUrl = titleSource?.embedUrl || '';
+  let sourceType: NonNullable<MovieItem['videoSources'][number]['sourceType']> = titleSource?.sourceType || 'embed';
+  // Older admin forms did not identify .mpd URLs, so existing DASH sources
+  // may have been stored as embeds. Recover the manifest type at authorization.
+  if (sourceType === 'embed' && /\.mpd(?:$|[?#])/i.test(embedUrl.trim())) sourceType = 'dash';
+
+  if (!titleSource) {
+    const configuredServer = CURRENT_THEME_OPTIONS.streamingServers.find(server => server.id === serverId);
+    if (configuredServer) {
+      if (!configuredServer.enabled) return res.status(404).json({ error: 'The selected playback source is disabled.' });
+      const template = movie.type === 'tv'
+        ? configuredServer.tvEmbedTemplate || configuredServer.embedTemplate
+        : configuredServer.embedTemplate;
+      embedUrl = buildEmbedUrl(
+        template,
+        movie.type,
+        movie.tmdbId?.trim() || movie.id.replace(/^tmdb-/i, '').trim() || movie.id,
+        movie.type === 'tv' ? seasonNumber : undefined,
+        movie.type === 'tv' ? episodeNumber : undefined
+      );
+      sourceType = 'embed';
+    }
+  }
+
+  if (!embedUrl.trim()) {
+    return res.status(404).json({ error: 'The selected playback source has no URL configured.' });
+  }
+
+  let playbackUrl: URL;
+  try {
+    playbackUrl = new URL(embedUrl);
+  } catch {
+    return res.status(404).json({ error: 'No valid playback source is configured for this title.' });
+  }
+  if (playbackUrl.protocol !== 'https:' || playbackUrl.username || playbackUrl.password) {
+    return res.status(400).json({ error: 'Playback source must use a secure HTTPS URL.' });
+  }
+
+  return res.json({
+    url: playbackUrl.toString(),
+    sourceType,
+    ...(titleSource?.clearKeyId && titleSource?.clearKey
+      ? { clearKeyId: titleSource.clearKeyId, clearKey: titleSource.clearKey }
+      : {})
+  });
+});
+
+app.post('/api/playback/check', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const accessError = await checkPlaybackAccess(req);
+  if (accessError) return res.status(accessError.status).json({ error: accessError.error, code: accessError.code });
+  return res.json({ allowed: true });
+});
+
+app.get('/api/playback/progress/:movieId', requireAuthenticated, async (req: Request, res: Response) => {
+  const session = getSessionUser(req)!;
+  const season = Number(req.query.season);
+  const episode = Number(req.query.episode);
+  let result;
+  if (Number.isInteger(season) && Number.isInteger(episode)) {
+    result = await database.query(
+      `SELECT p.position_seconds AS "positionSeconds", p.duration_seconds AS "durationSeconds", p.updated_at AS "updatedAt"
+       FROM myflixer_playback_progress p JOIN myflixer_tv_episodes e ON e.id=p.episode_id JOIN myflixer_tv_seasons s ON s.id=e.season_id
+       WHERE p.username=$1 AND s.show_id=$2 AND s.season_number=$3 AND e.episode_number=$4`,
+      [session.username, req.params.movieId, season, episode]
+    );
+  } else {
+    result = await database.query(
+      `SELECT position_seconds AS "positionSeconds", duration_seconds AS "durationSeconds", updated_at AS "updatedAt"
+       FROM myflixer_playback_progress WHERE username=$1 AND movie_id=$2`, [session.username, req.params.movieId]
+    );
+  }
+  res.json(result.rows[0] || null);
+});
+
+app.put('/api/playback/progress/:movieId', requireAuthenticated, async (req: Request, res: Response) => {
+  const session = getSessionUser(req)!;
+  const position = Number(req.body.positionSeconds);
+  const duration = Number(req.body.durationSeconds);
+  if (!Number.isFinite(position) || !Number.isFinite(duration) || position < 0 || duration <= 0 || position > duration) {
+    return res.status(400).json({ error: 'Playback position is invalid.' });
+  }
+  const season = Number(req.body.season);
+  const episode = Number(req.body.episode);
+  if (Number.isInteger(season) && Number.isInteger(episode)) {
+    const row = await database.query(
+      `SELECT e.id FROM myflixer_tv_episodes e JOIN myflixer_tv_seasons s ON s.id=e.season_id
+       WHERE s.show_id=$1 AND s.season_number=$2 AND e.episode_number=$3`, [req.params.movieId, season, episode]
+    );
+    if (!row.rows[0]) return res.status(404).json({ error: 'Episode not found.' });
+    await database.query(
+      `INSERT INTO myflixer_playback_progress(username,episode_id,position_seconds,duration_seconds) VALUES($1,$2,$3,$4)
+       ON CONFLICT(username,episode_id) WHERE episode_id IS NOT NULL DO UPDATE SET position_seconds=EXCLUDED.position_seconds,duration_seconds=EXCLUDED.duration_seconds,updated_at=NOW()`,
+      [session.username, row.rows[0].id, position, duration]
+    );
+  } else {
+    await database.query(
+      `INSERT INTO myflixer_playback_progress(username,movie_id,position_seconds,duration_seconds) VALUES($1,$2,$3,$4)
+       ON CONFLICT(username,movie_id) WHERE movie_id IS NOT NULL DO UPDATE SET position_seconds=EXCLUDED.position_seconds,duration_seconds=EXCLUDED.duration_seconds,updated_at=NOW()`,
+      [session.username, req.params.movieId, position, duration]
+    );
+  }
+  res.json({ success: true });
 });
 
 app.post('/api/movies/:id/rate', async (req: Request, res: Response) => {
@@ -497,11 +754,15 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     const mailer = getRegistrationMailer();
     await database.query("DELETE FROM myflixer_registration_otps WHERE expires_at < NOW() - INTERVAL '1 day'");
     const existingAccount = await database.query(
-      'SELECT 1 FROM myflixer_users WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2) LIMIT 1',
+      'SELECT username, email FROM myflixer_users WHERE LOWER(username) = LOWER($1) OR LOWER(email) = LOWER($2) LIMIT 1',
       [username, email]
     );
-    if (existingAccount.rowCount) {
-      return res.status(409).json({ error: 'Username or email is already registered.' });
+    const accountConflict = existingAccount.rows[0];
+    if (accountConflict?.email.toLowerCase() === email) {
+      return res.status(409).json({ error: 'This email is already in use. Sign in or use a different email address.' });
+    }
+    if (accountConflict) {
+      return res.status(409).json({ error: 'This username is already in use. Choose a different username.' });
     }
 
     const existingPending = await database.query(
@@ -510,9 +771,11 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
     );
     if (existingPending.rowCount) {
       const pending = existingPending.rows[0];
-      if (pending.username.toLowerCase() !== username.toLowerCase()
-        || pending.email.toLowerCase() !== email) {
-        return res.status(409).json({ error: 'Username or email is already being used for a pending registration.' });
+      if (pending.email.toLowerCase() === email && pending.username.toLowerCase() !== username.toLowerCase()) {
+        return res.status(409).json({ error: 'This email already has a pending registration. Verify it or use a different email address.' });
+      }
+      if (pending.username.toLowerCase() === username.toLowerCase() && pending.email.toLowerCase() !== email) {
+        return res.status(409).json({ error: 'This username is already being used for a pending registration.' });
       }
       return res.status(202).json({ requiresVerification: true, email });
     }
@@ -535,7 +798,7 @@ app.post('/api/auth/register', async (req: Request, res: Response) => {
         [email, codeHash]
       ).catch(cleanupError => console.error('Could not clean up failed registration OTP:', cleanupError));
     }
-    if (isUniqueViolation(error)) return res.status(409).json({ error: 'Username or email is already registered.' });
+    if (isUniqueViolation(error)) return res.status(409).json({ error: 'This email or username is already in use. Sign in or choose different details.' });
     console.error('Registration error:', error);
     return res.status(503).json({ error: 'Could not send the verification email. Check SMTP configuration and try again.' });
   }
@@ -661,6 +924,193 @@ app.post('/api/auth/register/verify', async (req: Request, res: Response) => {
   }
 });
 
+app.post('/api/auth/password-reset/request', async (req: Request, res: Response) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    return res.status(400).json({ error: 'Enter a valid email address.' });
+  }
+
+  let mailer: ReturnType<typeof getRegistrationMailer>;
+  try {
+    mailer = getRegistrationMailer();
+  } catch (error) {
+    console.error('Password reset email configuration error:', error);
+    return res.status(503).json({ error: 'Password reset email is temporarily unavailable.' });
+  }
+
+  try {
+    await database.query("DELETE FROM myflixer_password_reset_otps WHERE expires_at < NOW() - INTERVAL '1 day'");
+    const accountResult = await database.query(
+      `SELECT username, email FROM myflixer_users
+       WHERE LOWER(email) = $1 AND status = 'active'`,
+      [email]
+    );
+    const account = accountResult.rows[0];
+    if (!account) return res.status(404).json({ error: 'This email or user does not exist.' });
+
+    const existing = await database.query(
+      'SELECT last_sent_at FROM myflixer_password_reset_otps WHERE username = $1',
+      [account.username]
+    );
+    if (existing.rows[0] && Date.now() - new Date(existing.rows[0].last_sent_at).getTime() < 60_000) {
+      return res.status(202).json({ message: 'If an active account uses that email, a reset code will be sent.' });
+    }
+
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const codeHash = hashRegistrationCode(email, code);
+    const created = await database.query(
+      `INSERT INTO myflixer_password_reset_otps
+         (username, email, code_hash, expires_at, attempts, last_sent_at, reset_token_hash, verified_at)
+       VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes', 0, NOW(), NULL, NULL)
+       ON CONFLICT (username) DO UPDATE SET
+         email = EXCLUDED.email,
+         code_hash = EXCLUDED.code_hash,
+         expires_at = EXCLUDED.expires_at,
+         attempts = 0,
+         last_sent_at = NOW(),
+         reset_token_hash = NULL,
+         verified_at = NULL
+       WHERE myflixer_password_reset_otps.last_sent_at <= NOW() - INTERVAL '60 seconds'
+       RETURNING username`,
+      [account.username, email, codeHash]
+    );
+    if (!created.rowCount) {
+      return res.status(202).json({ message: 'If an active account uses that email, a reset code will be sent.' });
+    }
+
+    try {
+      await sendPasswordResetCode(email, code, mailer);
+    } catch (error) {
+      console.error('Password reset email delivery failed:', error);
+      await database.query(
+        'DELETE FROM myflixer_password_reset_otps WHERE username = $1 AND code_hash = $2',
+        [account.username, codeHash]
+      ).catch(cleanupError => console.error('Could not clean up failed password reset OTP:', cleanupError));
+      return res.status(503).json({ error: 'Could not send the reset code. Please try again later.' });
+    }
+    return res.status(202).json({ message: 'If an active account uses that email, a reset code will be sent.' });
+  } catch (error) {
+    console.error('Password reset request failed:', error);
+    return res.status(500).json({ error: 'Could not process the password reset request.' });
+  }
+});
+
+app.post('/api/auth/password-reset/verify', async (req: Request, res: Response) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const code = String(req.body.code || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ error: 'Enter a valid email address and six-digit code.' });
+  }
+
+  const client = await database.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `SELECT username, code_hash, expires_at, attempts
+       FROM myflixer_password_reset_otps WHERE email = $1 FOR UPDATE`,
+      [email]
+    );
+    const pending = result.rows[0];
+    if (!pending) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'The reset code is invalid or expired. Request a new code.' });
+    }
+    if (new Date(pending.expires_at).getTime() <= Date.now()) {
+      await client.query('DELETE FROM myflixer_password_reset_otps WHERE username = $1', [pending.username]);
+      await client.query('COMMIT');
+      return res.status(400).json({ error: 'The reset code expired. Request a new code.' });
+    }
+    if (pending.attempts >= 5) {
+      await client.query('ROLLBACK');
+      return res.status(429).json({ error: 'Too many incorrect attempts. Request a new code.' });
+    }
+
+    const expectedHash = Buffer.from(pending.code_hash, 'hex');
+    const providedHash = Buffer.from(hashRegistrationCode(email, code), 'hex');
+    if (expectedHash.length !== providedHash.length || !timingSafeEqual(expectedHash, providedHash)) {
+      await client.query(
+        'UPDATE myflixer_password_reset_otps SET attempts = attempts + 1 WHERE username = $1',
+        [pending.username]
+      );
+      await client.query('COMMIT');
+      return res.status(pending.attempts + 1 >= 5 ? 429 : 400).json({
+        error: pending.attempts + 1 >= 5
+          ? 'Too many incorrect attempts. Request a new code.'
+          : 'The reset code is incorrect.'
+      });
+    }
+
+    const resetToken = randomBytes(32).toString('base64url');
+    await client.query(
+      `UPDATE myflixer_password_reset_otps
+       SET code_hash = '', reset_token_hash = $2, verified_at = NOW()
+       WHERE username = $1`,
+      [pending.username, hashPasswordResetToken(email, resetToken)]
+    );
+    await client.query('COMMIT');
+    return res.json({ resetToken });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(rollbackError => console.error('Password reset verification rollback failed:', rollbackError));
+    console.error('Password reset code verification failed:', error);
+    return res.status(500).json({ error: 'Could not verify the reset code.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/auth/password-reset/complete', async (req: Request, res: Response) => {
+  const email = String(req.body.email || '').trim().toLowerCase();
+  const resetToken = String(req.body.resetToken || '');
+  const password = String(req.body.password || '');
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || resetToken.length < 40 || resetToken.length > 100
+    || password.length < 8 || password.length > 128) {
+    return res.status(400).json({ error: 'Enter a valid reset request and a password between 8 and 128 characters.' });
+  }
+
+  const passwordHash = await hashPassword(password);
+  const client = await database.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `SELECT r.username, r.reset_token_hash, r.expires_at, r.verified_at
+       FROM myflixer_password_reset_otps r
+       JOIN myflixer_users u ON u.username = r.username
+       WHERE r.email = $1 AND LOWER(u.email) = $1 AND u.status = 'active'
+       FOR UPDATE OF r`,
+      [email]
+    );
+    const reset = result.rows[0];
+    if (!reset || !reset.reset_token_hash || !reset.verified_at
+      || new Date(reset.expires_at).getTime() <= Date.now()) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'The verified reset request is invalid or expired. Request a new code.' });
+    }
+    const expectedHash = Buffer.from(reset.reset_token_hash, 'hex');
+    const providedHash = Buffer.from(hashPasswordResetToken(email, resetToken), 'hex');
+    if (expectedHash.length !== providedHash.length || !timingSafeEqual(expectedHash, providedHash)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'The verified reset request is invalid or expired. Request a new code.' });
+    }
+
+    await client.query(
+      'UPDATE myflixer_users SET password_hash = $2 WHERE username = $1',
+      [reset.username, passwordHash]
+    );
+    await client.query('DELETE FROM myflixer_password_reset_otps WHERE username = $1', [reset.username]);
+    await client.query('COMMIT');
+
+    const account = USERS_STORE[reset.username];
+    if (account) account.passwordHash = passwordHash;
+    return res.json({ success: true });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(rollbackError => console.error('Password reset completion rollback failed:', rollbackError));
+    console.error('Password reset completion failed:', error);
+    return res.status(500).json({ error: 'Could not reset the password.' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/auth/login', async (req: Request, res: Response) => {
   const identifier = String(req.body.identifier || req.body.username || '').trim();
   const password = String(req.body.password || '');
@@ -691,6 +1141,74 @@ app.use('/api/admin', requireAdmin);
 
 // User Watchlist & History
 app.use('/api/user', requireAuthenticated);
+
+app.get('/api/user/subscription', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const username = getSessionUser(req)!.username;
+  const result = await database.query(
+    'SELECT status, expires_at FROM myflixer_subscriptions WHERE username = $1',
+    [username]
+  );
+  const subscription = result.rows[0];
+  if (!subscription) return res.json({ status: 'none', expiresAt: null });
+  const isExpired = subscription.status === 'active'
+    && subscription.expires_at
+    && new Date(subscription.expires_at).getTime() <= Date.now();
+  return res.json({
+    status: isExpired ? 'expired' : subscription.status,
+    expiresAt: subscription.expires_at
+  });
+});
+
+app.get('/api/user/subscription-payment-requests', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const username = getSessionUser(req)!.username;
+  const result = await database.query(
+    `SELECT id, plan_id AS "planId", provider, transaction_reference AS "transactionReference",
+      status, created_at AS "createdAt", reviewed_at AS "reviewedAt"
+     FROM myflixer_subscription_payment_requests
+     WHERE username = $1
+     ORDER BY created_at DESC
+     LIMIT 20`,
+    [username]
+  );
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(result.rows);
+});
+
+app.post('/api/user/subscription-payment-requests', rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false
+}), async (req: Request, res: Response) => {
+  const username = getSessionUser(req)!.username;
+  const planId = typeof req.body.planId === 'string' ? req.body.planId : '';
+  const plan = SUBSCRIPTION_PLANS.find(item => item.id === planId);
+  const provider = req.body.provider;
+  const transactionReference = typeof req.body.transactionReference === 'string'
+    ? req.body.transactionReference.trim()
+    : '';
+  if (!plan) return res.status(400).json({ error: 'Choose a valid subscription plan.' });
+  if (provider !== 'gcash' && provider !== 'maya') return res.status(400).json({ error: 'Choose GCash or Maya.' });
+  if (transactionReference.length < 4 || transactionReference.length > 120) {
+    return res.status(400).json({ error: 'Enter a transaction reference between 4 and 120 characters.' });
+  }
+
+  const paymentSettings = CURRENT_THEME_OPTIONS.subscriptionPayments;
+  const accountNumber = provider === 'gcash' ? paymentSettings.gcashAccountNumber : paymentSettings.mayaAccountNumber;
+  const qrImageUrl = provider === 'gcash' ? paymentSettings.gcashQrImageUrl : paymentSettings.mayaQrImageUrl;
+  if (!accountNumber && !qrImageUrl) return res.status(409).json({ error: `The ${provider === 'gcash' ? 'GCash' : 'Maya'} payment account is not configured yet.` });
+
+  const result = await database.query(
+    `INSERT INTO myflixer_subscription_payment_requests (username, plan_id, provider, transaction_reference)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, plan_id AS "planId", provider, transaction_reference AS "transactionReference",
+       status, created_at AS "createdAt", reviewed_at AS "reviewedAt"`,
+    [username, plan.id, provider, transactionReference]
+  );
+  res.status(201).json(result.rows[0]);
+});
 
 app.get('/api/user/state', (req: Request, res: Response) => {
   const username = getSessionUser(req)!.username;
@@ -772,7 +1290,7 @@ app.get('/api/user/watchlist', (req: Request, res: Response) => {
   const username = getSessionUser(req)!.username;
   const ids = USER_WATCHLISTS[username] || [];
   const items = MOVIES_STORE.filter(m => ids.includes(m.id));
-  res.json(items);
+  res.json(items.map(publicMovie));
 });
 
 app.post('/api/user/watchlist', async (req: Request, res: Response) => {
@@ -830,7 +1348,8 @@ const INITIAL_THEME_OPTIONS = {
     defaultThemeMode: 'dark',
     maintenanceMode: false,
     registrationEnabled: false,
-    guestBrowsingEnabled: true
+    guestBrowsingEnabled: true,
+    subscriptionModeEnabled: false
   },
   homepageSections: [
     { id: 'sec-hero', key: 'hero', title: 'Featured Hero Banner', enabled: true, itemsCount: 5, displayOrder: 1 },
@@ -908,6 +1427,14 @@ const INITIAL_THEME_OPTIONS = {
     sidebarAdHtml: '<div class="p-4 bg-neutral-800 text-neutral-400 text-center text-xs rounded-xl">Authorized Sidebar Advertisement Placement (300x250)</div>',
     playerAdEnabled: false,
     playerAdHtml: '<div class="p-2 bg-neutral-900 text-neutral-400 text-center text-xs rounded-lg">Pre-roll Banner Placement</div>'
+  },
+  subscriptionPayments: {
+    gcashDisplayName: '',
+    gcashAccountNumber: '',
+    gcashQrImageUrl: '',
+    mayaDisplayName: '',
+    mayaAccountNumber: '',
+    mayaQrImageUrl: ''
   }
 };
 
@@ -926,6 +1453,10 @@ async function loadPersistentState() {
   ]);
 
   MOVIES_STORE.splice(0, MOVIES_STORE.length, ...movieRows.rows.map((row: any) => row.data as MovieItem));
+  for (const movie of MOVIES_STORE) {
+    try { await persistImportedHierarchy(movie); }
+    catch (error) { console.error(`Catalog relationship migration failed for ${movie.id}:`, error); }
+  }
   for (const row of userRows.rows) {
     USERS_STORE[row.username] = {
       username: row.username,
@@ -954,7 +1485,15 @@ async function loadPersistentState() {
   for (const row of commentRows.rows) COMMENTS_STORE[row.movie_id] = row.data || [];
 
   if (settingsRows.rows[0]?.data) {
-    CURRENT_THEME_OPTIONS = { ...INITIAL_THEME_OPTIONS, ...settingsRows.rows[0].data };
+    CURRENT_THEME_OPTIONS = {
+      ...INITIAL_THEME_OPTIONS,
+      ...settingsRows.rows[0].data,
+      general: { ...INITIAL_THEME_OPTIONS.general, ...settingsRows.rows[0].data.general },
+      subscriptionPayments: {
+        ...INITIAL_THEME_OPTIONS.subscriptionPayments,
+        ...settingsRows.rows[0].data.subscriptionPayments
+      }
+    };
     if (CURRENT_THEME_OPTIONS.headerFooter.disclaimerText === 'Playback sources must be content you own or are authorized to stream.') {
       CURRENT_THEME_OPTIONS.headerFooter.disclaimerText = INITIAL_THEME_OPTIONS.headerFooter.disclaimerText;
     }
@@ -990,8 +1529,14 @@ async function bootstrapAdmin() {
 
 // Theme Settings Endpoints
 app.get('/api/site/settings', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
   const publicSettings = JSON.parse(JSON.stringify(CURRENT_THEME_OPTIONS));
   if (publicSettings.tmdb) publicSettings.tmdb.apiKey = '';
+  publicSettings.streamingServers = publicSettings.streamingServers.map((server: any) => ({
+    ...server,
+    embedTemplate: '',
+    tvEmbedTemplate: ''
+  }));
   res.json(publicSettings);
 });
 
@@ -1001,15 +1546,195 @@ app.get('/api/admin/settings', (_req: Request, res: Response) => {
 
 app.post('/api/admin/settings', async (req: Request, res: Response) => {
   try {
-    CURRENT_THEME_OPTIONS = { ...CURRENT_THEME_OPTIONS, ...req.body };
-    await database.query("UPDATE myflixer_site_settings SET data = $1, updated_at = NOW() WHERE key = 'primary'", [CURRENT_THEME_OPTIONS]);
-    res.json({ success: true, settings: CURRENT_THEME_OPTIONS });
+    if (req.body.general?.subscriptionModeEnabled !== undefined
+      && typeof req.body.general.subscriptionModeEnabled !== 'boolean') {
+      return res.status(400).json({ error: 'Subscription mode must be enabled or disabled.' });
+    }
+    const paymentSettings = req.body.subscriptionPayments;
+    if (paymentSettings !== undefined) {
+      const fields = [
+        'gcashDisplayName', 'gcashAccountNumber', 'gcashQrImageUrl',
+        'mayaDisplayName', 'mayaAccountNumber', 'mayaQrImageUrl'
+      ];
+      if (!paymentSettings || typeof paymentSettings !== 'object'
+        || fields.some(field => typeof paymentSettings[field] !== 'string' || paymentSettings[field].length > 500)) {
+        return res.status(400).json({ error: 'Enter valid GCash and Maya payment settings.' });
+      }
+      for (const field of ['gcashQrImageUrl', 'mayaQrImageUrl']) {
+        const imageUrl = paymentSettings[field].trim();
+        if (imageUrl && !imageUrl.startsWith('/') && !/^https:\/\//i.test(imageUrl)) {
+          return res.status(400).json({ error: 'QR image links must use HTTPS or a same-site path.' });
+        }
+        if (imageUrl.startsWith('//')) return res.status(400).json({ error: 'QR image links must use HTTPS or a same-site path.' });
+      }
+    }
+    const updatedSettings = {
+      ...CURRENT_THEME_OPTIONS,
+      ...req.body,
+      general: { ...CURRENT_THEME_OPTIONS.general, ...req.body.general },
+      subscriptionPayments: {
+        ...CURRENT_THEME_OPTIONS.subscriptionPayments,
+        ...paymentSettings
+      }
+    };
+    await database.query("UPDATE myflixer_site_settings SET data = $1, updated_at = NOW() WHERE key = 'primary'", [updatedSettings]);
+    CURRENT_THEME_OPTIONS = updatedSettings;
+    res.json({ success: true, settings: updatedSettings });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
+app.get('/api/admin/subscriptions', async (_req: Request, res: Response) => {
+  const result = await database.query(
+    `SELECT u.username, u.display_name, u.email,
+      CASE
+        WHEN s.status = 'active' AND s.expires_at IS NOT NULL AND s.expires_at <= NOW() THEN 'expired'
+        ELSE COALESCE(s.status, 'none')
+      END AS status,
+      s.expires_at AS "expiresAt"
+     FROM myflixer_users u
+     LEFT JOIN myflixer_subscriptions s ON s.username = u.username
+     ORDER BY u.created_at`
+  );
+  res.json(result.rows);
+});
+
+app.put('/api/admin/subscriptions/:username', async (req: Request, res: Response) => {
+  const status = req.body.status;
+  const expiresAtValue = req.body.expiresAt;
+  if (!['active', 'expired', 'canceled', 'none'].includes(status)) {
+    return res.status(400).json({ error: 'Choose active, expired, canceled, or no subscription.' });
+  }
+
+  const userResult = await database.query('SELECT 1 FROM myflixer_users WHERE username = $1', [req.params.username]);
+  if (!userResult.rowCount) return res.status(404).json({ error: 'User account not found.' });
+  if (status === 'none') {
+    await database.query('DELETE FROM myflixer_subscriptions WHERE username = $1', [req.params.username]);
+    return res.json({ username: req.params.username, status: 'none', expiresAt: null });
+  }
+
+  let expiresAt: string | null = null;
+  if (expiresAtValue !== undefined && expiresAtValue !== null && expiresAtValue !== '') {
+    if (typeof expiresAtValue !== 'string') return res.status(400).json({ error: 'Enter a valid subscription expiration date.' });
+    const dateValue = /^\d{4}-\d{2}-\d{2}$/.test(expiresAtValue)
+      ? `${expiresAtValue}T23:59:59.999Z`
+      : expiresAtValue;
+    const parsedDate = new Date(dateValue);
+    if (Number.isNaN(parsedDate.getTime())) return res.status(400).json({ error: 'Enter a valid subscription expiration date.' });
+    expiresAt = parsedDate.toISOString();
+  }
+
+  const result = await database.query(
+    `INSERT INTO myflixer_subscriptions (username, status, expires_at, updated_at)
+     SELECT username, $2, $3, NOW() FROM myflixer_users WHERE username = $1
+     ON CONFLICT (username) DO UPDATE
+       SET status = EXCLUDED.status, expires_at = EXCLUDED.expires_at, updated_at = NOW()
+     RETURNING username, status, expires_at AS "expiresAt"`,
+    [req.params.username, status, expiresAt]
+  );
+  if (!result.rowCount) return res.status(404).json({ error: 'User account not found.' });
+
+  const subscription = result.rows[0];
+  if (subscription.status === 'active' && subscription.expiresAt && new Date(subscription.expiresAt).getTime() <= Date.now()) {
+    subscription.status = 'expired';
+  }
+  return res.json(subscription);
+});
+
+app.get('/api/admin/subscription-payment-requests', async (_req: Request, res: Response) => {
+  const result = await database.query(
+    `SELECT r.id, r.username, u.display_name AS "displayName", u.email,
+      r.plan_id AS "planId", r.provider, r.transaction_reference AS "transactionReference",
+      r.status, r.created_at AS "createdAt", r.reviewed_at AS "reviewedAt"
+     FROM myflixer_subscription_payment_requests r
+     JOIN myflixer_users u ON u.username = r.username
+     ORDER BY CASE WHEN r.status = 'pending' THEN 0 ELSE 1 END, r.created_at DESC
+     LIMIT 200`
+  );
+  res.json(result.rows);
+});
+
+app.put('/api/admin/subscription-payment-requests/:id', async (req: Request, res: Response) => {
+  const requestId = Number(req.params.id);
+  const decision = req.body.decision;
+  if (!Number.isSafeInteger(requestId) || requestId < 1) return res.status(400).json({ error: 'Invalid payment request.' });
+  if (decision !== 'approved' && decision !== 'rejected') return res.status(400).json({ error: 'Choose approve or reject.' });
+
+  const client = await database.connect();
+  try {
+    await client.query('BEGIN');
+    const requestResult = await client.query(
+      'SELECT id, username, plan_id, status FROM myflixer_subscription_payment_requests WHERE id = $1 FOR UPDATE',
+      [requestId]
+    );
+    const paymentRequest = requestResult.rows[0];
+    if (!paymentRequest) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Payment request not found.' });
+    }
+    if (paymentRequest.status !== 'pending') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'This payment request has already been reviewed.' });
+    }
+
+    if (decision === 'approved') {
+      const plan = SUBSCRIPTION_PLANS.find(item => item.id === paymentRequest.plan_id);
+      if (!plan) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'The requested plan is no longer available.' });
+      }
+      await client.query(
+        `INSERT INTO myflixer_subscriptions (username, status, expires_at, updated_at)
+         VALUES (
+           $1,
+           'active',
+           NOW() + ($2::integer * INTERVAL '1 month'),
+           NOW()
+         )
+         ON CONFLICT (username) DO UPDATE SET
+           status = 'active',
+           expires_at = CASE
+             WHEN myflixer_subscriptions.status = 'active'
+               AND myflixer_subscriptions.expires_at > NOW()
+             THEN myflixer_subscriptions.expires_at + ($2::integer * INTERVAL '1 month')
+             ELSE NOW() + ($2::integer * INTERVAL '1 month')
+           END,
+           updated_at = NOW()`,
+        [paymentRequest.username, plan.months]
+      );
+    }
+
+    const updated = await client.query(
+      `UPDATE myflixer_subscription_payment_requests
+       SET status = $2, reviewed_at = NOW()
+       WHERE id = $1
+       RETURNING id, username, plan_id AS "planId", provider, status, reviewed_at AS "reviewedAt"`,
+      [requestId, decision]
+    );
+    await client.query('COMMIT');
+    return res.json(updated.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(rollbackError => console.error('Payment review rollback failed:', rollbackError));
+    throw error;
+  } finally {
+    client.release();
+  }
+});
+
 // Admin Media Management
+app.post('/api/admin/media-image', async (req: Request, res: Response) => {
+  const match = typeof req.body.image === 'string' && req.body.image.match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!match) return res.status(400).json({ error: 'Upload a JPEG, PNG, or WebP image.' });
+  const bytes = Buffer.from(match[2], 'base64');
+  if (!bytes.length || bytes.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'Images must be smaller than 8 MB.' });
+  const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+  const filename = `custom-${randomBytes(16).toString('hex')}.${ext}`;
+  await mkdir(mediaStorage, { recursive: true });
+  await writeFile(path.join(mediaStorage, filename), bytes);
+  res.json({ url: `/media/${filename}` });
+});
+
 app.get('/api/admin/media', (_req: Request, res: Response) => {
   res.json(MOVIES_STORE);
 });
@@ -1024,6 +1749,7 @@ app.post('/api/admin/media', async (req: Request, res: Response) => {
     videoSources: Array.isArray(req.body.videoSources) ? req.body.videoSources : []
   };
   await database.query('INSERT INTO myflixer_movies (id, slug, type, data) VALUES ($1, $2, $3, $4)', [newMovie.id, newMovie.slug, newMovie.type, newMovie]);
+  await persistImportedHierarchy(newMovie);
   MOVIES_STORE.unshift(newMovie);
   res.status(201).json(newMovie);
 });
@@ -1035,6 +1761,7 @@ app.put('/api/admin/media/:id', async (req: Request, res: Response) => {
   }
   MOVIES_STORE[idx] = { ...MOVIES_STORE[idx], ...req.body };
   await database.query('UPDATE myflixer_movies SET slug = $2, type = $3, data = $4, updated_at = NOW() WHERE id = $1', [req.params.id, MOVIES_STORE[idx].slug, MOVIES_STORE[idx].type, MOVIES_STORE[idx]]);
+  await persistImportedHierarchy(MOVIES_STORE[idx]);
   res.json(MOVIES_STORE[idx]);
 });
 
@@ -1331,17 +2058,73 @@ app.post('/api/admin/tmdb/sync-catalog-metadata', async (req: Request, res: Resp
 });
 
 // Import from TMDB
+async function persistImportedHierarchy(movie: MovieItem) {
+  const client = await database.connect();
+  try {
+    await client.query('BEGIN');
+    const seasonIds: string[] = [];
+    const episodeIds: string[] = [];
+    const movieSourceIds: string[] = [];
+    const episodeSourceIds: string[] = [];
+    for (const season of movie.seasons || []) {
+      const seasonId = String((season as any).id || `${movie.id}-season-${season.seasonNumber}`);
+      seasonIds.push(seasonId);
+      await client.query(
+        `INSERT INTO myflixer_tv_seasons(id, show_id, tmdb_id, season_number, data) VALUES($1,$2,$3,$4,$5)
+         ON CONFLICT(show_id, season_number) DO UPDATE SET tmdb_id=EXCLUDED.tmdb_id, data=EXCLUDED.data`,
+        [seasonId, movie.id, (season as any).tmdbId || null, season.seasonNumber, season]
+      );
+      for (const episode of season.episodes || []) {
+        const episodeId = episode.id || `${seasonId}-episode-${episode.episodeNumber}`;
+        episodeIds.push(episodeId);
+        await client.query(
+          `INSERT INTO myflixer_tv_episodes(id, season_id, tmdb_id, episode_number, data) VALUES($1,$2,$3,$4,$5)
+           ON CONFLICT(season_id, episode_number) DO UPDATE SET tmdb_id=EXCLUDED.tmdb_id, data=EXCLUDED.data`,
+          [episodeId, seasonId, (episode as any).tmdbId || null, episode.episodeNumber, episode]
+        );
+        for (const source of (episode as any).videoSources || []) {
+          if (!source.embedUrl) continue;
+          const relationalSourceId = `${movie.id}:${episodeId}:${source.id}`;
+          episodeSourceIds.push(relationalSourceId);
+          await client.query(
+            `INSERT INTO myflixer_streaming_sources(id,episode_id,name,url,source_type,is_default,is_active) VALUES($1,$2,$3,$4,$5,$6,$7)
+             ON CONFLICT(id) DO UPDATE SET episode_id=EXCLUDED.episode_id,name=EXCLUDED.name,url=EXCLUDED.url,source_type=EXCLUDED.source_type,is_default=EXCLUDED.is_default,is_active=EXCLUDED.is_active,updated_at=NOW()`,
+            [relationalSourceId, episodeId, source.name, source.embedUrl, source.sourceType || 'embed', source.isDefault === true, source.isActive !== false]
+          );
+        }
+      }
+    }
+    for (const source of movie.videoSources || []) {
+      if (!source.embedUrl) continue;
+      const relationalSourceId = `${movie.id}:movie:${source.id}`;
+      movieSourceIds.push(relationalSourceId);
+      await client.query(
+        `INSERT INTO myflixer_streaming_sources(id,movie_id,name,url,source_type,is_default,is_active)
+         VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET movie_id=EXCLUDED.movie_id,name=EXCLUDED.name,url=EXCLUDED.url,source_type=EXCLUDED.source_type,is_default=EXCLUDED.is_default,is_active=EXCLUDED.is_active,updated_at=NOW()`,
+        [relationalSourceId, movie.id, source.name, source.embedUrl, (source as any).sourceType || 'embed', (source as any).isDefault === true, (source as any).isActive !== false]
+      );
+    }
+    await client.query('DELETE FROM myflixer_tv_episodes WHERE season_id IN (SELECT id FROM myflixer_tv_seasons WHERE show_id=$1) AND NOT (id=ANY($2::text[]))', [movie.id, episodeIds]);
+    await client.query('DELETE FROM myflixer_tv_seasons WHERE show_id=$1 AND NOT (id=ANY($2::text[]))', [movie.id, seasonIds]);
+    await client.query('DELETE FROM myflixer_streaming_sources WHERE movie_id=$1 AND NOT (id=ANY($2::text[]))', [movie.id, movieSourceIds]);
+    if (episodeIds.length) {
+      await client.query('DELETE FROM myflixer_streaming_sources WHERE episode_id=ANY($1::text[]) AND NOT (id=ANY($2::text[]))', [episodeIds, episodeSourceIds]);
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally { client.release(); }
+}
+
 app.post('/api/admin/tmdb/import', async (req: Request, res: Response) => {
-  const { tmdbId, apiKey: requestedApiKey, title, type, year, overview, rating, posterUrl, backdropUrl, releaseDate, publishStatus } = req.body;
+  const { tmdbId, apiKey: requestedApiKey, title, type, year, overview, rating, posterUrl, backdropUrl, releaseDate, publishStatus, updateExisting, previewOnly } = req.body;
   const apiKey = process.env.TMDB_API_KEY || requestedApiKey;
   const mediaType: 'tv' | 'movie' = type === 'tv' ? 'tv' : 'movie';
   
   // Check duplicate
-  const exists = MOVIES_STORE.find(m => m.id === `tmdb-${tmdbId}` || m.title.toLowerCase() === title?.toLowerCase());
-  const refreshExistingSeries = Boolean(exists && mediaType === 'tv' && !exists.seasons?.length);
-  if (exists && !refreshExistingSeries) {
-    return res.status(409).json({ error: 'Title already exists in catalog', movie: exists });
-  }
+  const exists = MOVIES_STORE.find(m => String(m.tmdbId || '') === String(tmdbId) || m.id === `tmdb-${tmdbId}`);
+  if (exists && !updateExisting && !previewOnly) return res.status(409).json({ error: 'Title already exists in catalog', movie: exists, canUpdate: true });
 
   if (!tmdbId) return res.status(400).json({ error: 'A TMDB title ID is required.' });
   if (!apiKey || String(apiKey).trim().length <= 5) {
@@ -1354,7 +2137,7 @@ app.post('/api/admin/tmdb/import', async (req: Request, res: Response) => {
   const apiKeyParam = `api_key=${encodeURIComponent(String(apiKey).trim())}`;
   let details: any;
   try {
-    const detailsResponse = await fetch(`https://api.themoviedb.org/3/${mediaType}/${encodeURIComponent(String(tmdbId))}?${apiKeyParam}`);
+    const detailsResponse = await fetch(`https://api.themoviedb.org/3/${mediaType}/${encodeURIComponent(String(tmdbId))}?${apiKeyParam}&append_to_response=credits`);
     if (!detailsResponse.ok) {
       return res.status(502).json({ error: 'Could not retrieve title metadata from TMDB. Verify the API key and try again.' });
     }
@@ -1371,87 +2154,104 @@ app.post('/api/admin/tmdb/import', async (req: Request, res: Response) => {
   if (mediaType === 'tv') {
     try {
       const seasonDetails = await Promise.all((details.seasons || [])
-        .filter((season: any) => Number(season.season_number) > 0)
+        .filter((season: any) => Number(season.season_number) >= 0)
         .map(async (season: any) => {
           const seasonNumber = Number(season.season_number);
           const seasonResponse = await fetch(`https://api.themoviedb.org/3/tv/${encodeURIComponent(String(tmdbId))}/season/${seasonNumber}?${apiKeyParam}`);
           if (!seasonResponse.ok) return null;
           const seasonData = await seasonResponse.json();
           return {
+            tmdbId: String(seasonData.id || ''),
             seasonNumber,
             title: seasonData.name || season.name || `Season ${seasonNumber}`,
-            episodes: (seasonData.episodes || []).map((episode: any) => ({
+            overview: seasonData.overview || '',
+            airDate: seasonData.air_date || '',
+            episodeCount: (seasonData.episodes || []).length,
+            posterUrl: seasonData.poster_path ? (await cacheTmdbImage(seasonData.poster_path, 'w500', `${tmdbId}-season-${seasonNumber}`) || `https://image.tmdb.org/t/p/w500${seasonData.poster_path}`) : '',
+            episodes: await Promise.all((seasonData.episodes || []).map(async (episode: any) => ({
               id: `tmdb-${tmdbId}-s${seasonNumber}-e${episode.episode_number}`,
+              tmdbId: String(episode.id || ''),
               episodeNumber: Number(episode.episode_number),
               seasonNumber,
               title: episode.name || `Episode ${episode.episode_number}`,
               duration: episode.runtime ? `${episode.runtime} min` : '45 min',
               thumbnail: episode.still_path
-                ? `https://image.tmdb.org/t/p/w500${episode.still_path}`
+                ? (await cacheTmdbImage(episode.still_path, 'w500', `${tmdbId}-s${seasonNumber}-e${episode.episode_number}`) || `https://image.tmdb.org/t/p/w500${episode.still_path}`)
                 : 'https://images.unsplash.com/photo-1518709268805-4e9042af9f23?q=80&w=400&auto=format&fit=crop',
               overview: episode.overview || '',
+              airDate: episode.air_date || '',
+              runtime: episode.runtime || null,
+              voteAverage: episode.vote_average || 0,
               embedUrl: ''
-            }))
+            })))
           };
         }));
-      seasons = seasonDetails.filter((season: any) => season && season.episodes.length > 0);
+      seasons = seasonDetails.filter((season: any) => season);
     } catch (error) {
       console.error(`TMDB season import failed for ${tmdbId}:`, error);
     }
   }
 
+  const credits = details.credits || {};
   const importedItem = {
     id: exists?.id || `tmdb-${tmdbId || Date.now()}`,
     tmdbId: tmdbId ? String(tmdbId) : undefined,
     metadataSource: 'tmdb' as const,
-    title: title || 'Imported TMDB Title',
+    title: details.title || details.name || title || 'Imported TMDB Title',
+    originalTitle: details.original_title || details.original_name || '',
     slug: (title || `title-${Date.now()}`).toLowerCase().replace(/[^a-z0-9]+/g, '-'),
     type: mediaType,
-    year: year || 2024,
-    duration: type === 'tv' ? '50 min/ep' : '115 min',
+    year: Number(String(details.release_date || details.first_air_date || '').slice(0, 4)) || year || 2024,
+    duration: mediaType === 'tv' ? `${details.episode_run_time?.[0] || 50} min/ep` : `${details.runtime || 0} min`,
     quality: 'HD' as const,
-    rating: rating || 7.8,
-    ratingCount: 150,
+    rating: Number(details.vote_average ?? rating) || 0,
+    ratingCount: Number(details.vote_count) || 0,
+    originalLanguage: details.original_language || '',
+    firstAirDate: details.first_air_date || '',
+    lastAirDate: details.last_air_date || '',
+    runtime: details.runtime || null,
+    numberOfSeasons: details.number_of_seasons || seasons.length,
+    numberOfEpisodes: details.number_of_episodes || seasons.reduce((sum: number, season: any) => sum + season.episodes.length, 0),
+    metadata: details,
     genres: importedGenres,
     country: importedCountries.join(', '),
     countries: importedCountries,
-    director: 'Hollywood Director',
-    cast: ['Lead Actor', 'Supporting Cast'],
-    production: 'Studio Productions',
-    synopsis: overview || 'Imported via TMDB Metadata Engine.',
-    posterUrl: posterUrl || 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?q=80&w=600&auto=format&fit=crop',
-    backdropUrl: backdropUrl || 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?q=80&w=1600&auto=format&fit=crop',
+    castAndCrew: { cast: credits.cast || [], crew: credits.crew || [] },
+    director: (credits.crew || []).find((person: any) => person.job === 'Director')?.name || '',
+    cast: (credits.cast || []).slice(0, 20).map((person: any) => person.name),
+    production: (details.production_companies || []).map((company: any) => company.name).join(', '),
+    synopsis: details.overview || overview || '',
+    posterUrl: await cacheTmdbImage(details.poster_path, 'w500', String(tmdbId)) || posterUrl || (details.poster_path ? `https://image.tmdb.org/t/p/w500${details.poster_path}` : ''),
+    backdropUrl: await cacheTmdbImage(details.backdrop_path, 'original', String(tmdbId)) || backdropUrl || (details.backdrop_path ? `https://image.tmdb.org/t/p/original${details.backdrop_path}` : ''),
     viewsCount: 120,
     tags: ['tmdb', 'imported'],
-    releaseDate: releaseDate || '2024-01-01',
+    releaseDate: details.release_date || details.first_air_date || releaseDate || '',
     isRecommended: publishStatus === 'publish',
+    isFeatured: false,
     isTrending: false,
     ...(mediaType === 'tv' ? { seasons } : {}),
-    videoSources: (() => {
-      const defaultServer = CURRENT_THEME_OPTIONS.streamingServers.find((server: any) => server.enabled && server.isDefault)
-        || CURRENT_THEME_OPTIONS.streamingServers.find((server: any) => server.enabled);
-      const template = defaultServer?.embedTemplate || 'https://your-media-server.example/embed/movie/{id}';
-      const mediaTemplate = mediaType === 'tv'
-        ? defaultServer?.tvEmbedTemplate || template.replace('/embed/movie/{id}', '/embed/tv/{id}/{season}/{ep}').replace('/movie/', '/tv/')
-        : template;
-      return [{
-        id: defaultServer?.id || 'my-server',
-        name: defaultServer?.name || 'My Server',
-        quality: defaultServer?.quality || '1080p HD',
-        speed: 'Fast',
-        embedUrl: buildEmbedUrl(mediaTemplate, mediaType, String(tmdbId))
-      }];
-    })()
+    videoSources: []
   };
 
+  if (previewOnly) return res.json({ success: true, movie: importedItem });
+
   if (exists) {
+    importedItem.id = exists.id;
+    importedItem.slug = exists.slug;
+    importedItem.videoSources = (exists.videoSources || []) as typeof importedItem.videoSources;
+    importedItem.isFeatured = exists.isFeatured ?? false;
+    importedItem.isTrending = exists.isTrending ?? false;
+    importedItem.viewsCount = exists.viewsCount || 0;
+    importedItem.isRecommended = publishStatus === 'publish' || exists.isRecommended === true;
     Object.assign(exists, importedItem);
     await database.query('UPDATE myflixer_movies SET slug = $2, type = $3, data = $4, updated_at = NOW() WHERE id = $1', [exists.id, exists.slug, exists.type, exists]);
+    await persistImportedHierarchy(exists);
     return res.json({ success: true, movie: exists, refreshed: true });
   }
 
   await database.query('INSERT INTO myflixer_movies (id, slug, type, data) VALUES ($1, $2, $3, $4)', [importedItem.id, importedItem.slug, importedItem.type, importedItem]);
   MOVIES_STORE.unshift(importedItem);
+  await persistImportedHierarchy(importedItem);
   res.status(201).json({ success: true, movie: importedItem });
 });
 

@@ -13,17 +13,20 @@ import {
   ChevronRight,
   ShieldCheck,
   CheckCircle2,
-  HardDrive
+  HardDrive,
+  CreditCard
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { api } from '../services/api';
 import { Movie } from '../types/movie';
-import { ThemeOptionsConfig, AdminUser } from '../types/admin';
+import { ThemeOptionsConfig, AdminUser, AdminSubscription, SubscriptionStatus } from '../types/admin';
+import { SubscriptionPaymentRequest } from '../services/subscriptionPlans';
 import { DashboardOverviewTab } from '../components/admin/DashboardOverviewTab';
 import { ThemeOptionsTab } from '../components/admin/ThemeOptionsTab';
 import { MediaManagementTab } from '../components/admin/MediaManagementTab';
 import { TmdbImporterTab } from '../components/admin/TmdbImporterTab';
 import { UserManagementTab } from '../components/admin/UserManagementTab';
+import { SubscriptionSettingsTab } from '../components/admin/SubscriptionSettingsTab';
 
 export const AdminPage: React.FC = () => {
   const { 
@@ -37,10 +40,12 @@ export const AdminPage: React.FC = () => {
     refreshCurrentUser
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'theme-options' | 'media' | 'tmdb' | 'users'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'theme-options' | 'media' | 'tmdb' | 'users' | 'subscriptions'>('overview');
   const [themeOptionsSubSection, setThemeOptionsSubSection] = useState<string>('general');
   const [moviesList, setMoviesList] = useState<Movie[]>([]);
   const [usersList, setUsersList] = useState<AdminUser[]>([]);
+  const [subscriptions, setSubscriptions] = useState<AdminSubscription[]>([]);
+  const [paymentRequests, setPaymentRequests] = useState<SubscriptionPaymentRequest[]>([]);
   const [isPurgingCache, setIsPurgingCache] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -49,13 +54,17 @@ export const AdminPage: React.FC = () => {
     const loadAdminData = async () => {
       setLoading(true);
       try {
-        const [movies, users] = await Promise.all([
+        const [movies, users, subscriptionList, requests] = await Promise.all([
           api.getAdminMedia(),
-          api.getAdminUsers()
+          api.getAdminUsers(),
+          api.getAdminSubscriptions(),
+          api.getAdminSubscriptionPaymentRequests()
         ]);
         await refreshAdminSettings();
         setMoviesList(movies);
         setUsersList(users);
+        setSubscriptions(subscriptionList);
+        setPaymentRequests(requests);
       } finally {
         setLoading(false);
       }
@@ -94,6 +103,7 @@ export const AdminPage: React.FC = () => {
   const handleSaveUser = async (user: Partial<AdminUser> & { password?: string }) => {
     const saved = await api.saveAdminUser(user);
     if (user.id === currentUser?.username) await refreshCurrentUser();
+    setSubscriptions(await api.getAdminSubscriptions());
     setUsersList(prev => {
       const previousId = user.id;
       const exists = previousId ? prev.some(u => u.id === previousId) : false;
@@ -108,11 +118,28 @@ export const AdminPage: React.FC = () => {
   const handleDeleteUser = async (id: string) => {
     await api.deleteAdminUser(id);
     setUsersList(prev => prev.filter(u => u.id !== id));
+    setSubscriptions(prev => prev.filter(subscription => subscription.username !== id));
     showToast('User removed.');
   };
 
+  const handleSaveSubscription = async (
+    username: string,
+    subscription: { status: SubscriptionStatus; expiresAt: string | null }
+  ) => {
+    await api.saveAdminSubscription(username, subscription);
+    setSubscriptions(await api.getAdminSubscriptions());
+    showToast(`Subscription access updated for ${username}.`);
+  };
+
+  const handleReviewPaymentRequest = async (id: number, decision: 'approved' | 'rejected') => {
+    await api.reviewSubscriptionPaymentRequest(id, decision);
+    setPaymentRequests(await api.getAdminSubscriptionPaymentRequests());
+    if (decision === 'approved') setSubscriptions(await api.getAdminSubscriptions());
+    showToast(decision === 'approved' ? 'Payment verified and subscription activated.' : 'Payment request rejected.');
+  };
+
   return (
-    <div className="min-h-screen bg-[#16181f] text-[#e9ecef] flex flex-col font-['Poppins']">
+    <div className="admin-panel min-h-screen bg-[#16181f] text-[#e9ecef] flex flex-col font-['Poppins']">
       
       {/* Admin top bar */}
       <header className="h-14 bg-[#1e2129] border-b border-[#292d38] px-4 sm:px-6 flex items-center justify-between gap-4 sticky top-0 z-50 shadow-md">
@@ -254,6 +281,18 @@ export const AdminPage: React.FC = () => {
             </span>
           </button>
 
+          <button
+            onClick={() => setActiveTab('subscriptions')}
+            className={`w-full text-left px-3.5 py-2.5 rounded-2xl text-xs font-semibold flex items-center gap-2.5 transition-all cursor-pointer ${
+              activeTab === 'subscriptions'
+                ? 'bg-gradient-flixer text-white shadow-lg'
+                : 'text-[#b2b1ad] hover:text-white hover:bg-[#242832]'
+            }`}
+          >
+            <CreditCard className="w-4 h-4" />
+            <span>Subscription Settings</span>
+          </button>
+
           <div className="pt-4 mt-4 border-t border-[#2e3442]">
             <button
               onClick={() => navigateTo('home')}
@@ -295,6 +334,7 @@ export const AdminPage: React.FC = () => {
           {activeTab === 'media' && (
             <MediaManagementTab
               movies={moviesList}
+              apiKey={themeOptions.tmdb.apiKey}
               onAddMovie={handleAddMovie}
               onUpdateMovie={handleUpdateMovie}
               onDeleteMovie={handleDeleteMovie}
@@ -326,6 +366,25 @@ export const AdminPage: React.FC = () => {
               }}
               onSaveUser={handleSaveUser}
               onDeleteUser={handleDeleteUser}
+            />
+          )}
+
+          {activeTab === 'subscriptions' && (
+            <SubscriptionSettingsTab
+              subscriptions={subscriptions}
+              paymentRequests={paymentRequests}
+              generalSettings={themeOptions.general}
+              paymentSettings={themeOptions.subscriptionPayments}
+              onUpdateGeneralSettings={async settings => {
+                await updateThemeOptions({
+                  general: { ...themeOptions.general, ...settings }
+                });
+              }}
+              onSavePaymentSettings={async subscriptionPayments => {
+                await updateThemeOptions({ subscriptionPayments });
+              }}
+              onSaveSubscription={handleSaveSubscription}
+              onReviewPaymentRequest={handleReviewPaymentRequest}
             />
           )}
         </main>

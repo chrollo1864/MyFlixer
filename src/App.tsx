@@ -10,6 +10,7 @@ const WatchPage = lazy(() => import('./pages/WatchPage').then(module => ({ defau
 const BrowsePage = lazy(() => import('./pages/BrowsePage').then(module => ({ default: module.BrowsePage })));
 const WatchlistPage = lazy(() => import('./pages/WatchlistPage').then(module => ({ default: module.WatchlistPage })));
 const AccountPage = lazy(() => import('./pages/AccountPage').then(module => ({ default: module.AccountPage })));
+const SubscriptionPage = lazy(() => import('./pages/SubscriptionPage').then(module => ({ default: module.SubscriptionPage })));
 const LegalPage = lazy(() => import('./pages/LegalPage').then(module => ({ default: module.LegalPage })));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage').then(module => ({ default: module.NotFoundPage })));
 const AdminPage = lazy(() => import('./pages/AdminPage').then(module => ({ default: module.AdminPage })));
@@ -95,6 +96,7 @@ const AppContent: React.FC = () => {
           {currentView === 'browse' && <BrowsePage />}
           {currentView === 'watchlist' && <WatchlistPage />}
           {currentView === 'account' && <AccountPage />}
+          {currentView === 'subscription' && <SubscriptionPage />}
           {currentView === 'privacy' && <LegalPage type="privacy" />}
           {currentView === 'terms' && <LegalPage type="terms" />}
           {currentView === 'not-found' && <NotFoundPage />}

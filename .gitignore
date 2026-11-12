@@ -8,3 +8,4 @@ coverage/
 !.env.example
 .theme_settings.json
 server.js
+storage/media/

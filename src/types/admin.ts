@@ -1,3 +1,5 @@
+import type { SubscriptionPaymentSettings } from '../services/subscriptionPlans';
+
 export interface GeneralSettings {
   siteName: string;
   siteDescription: string;
@@ -10,6 +12,7 @@ export interface GeneralSettings {
   maintenanceMode: boolean;
   registrationEnabled: boolean;
   guestBrowsingEnabled: boolean;
+  subscriptionModeEnabled: boolean;
 }
 
 export interface HomepageSectionItem {
@@ -124,6 +127,21 @@ export interface AdminUser {
   avatar: string;
 }
 
+export type SubscriptionStatus = 'active' | 'expired' | 'canceled' | 'none';
+
+export interface AdminSubscription {
+  username: string;
+  displayName: string;
+  email: string;
+  status: SubscriptionStatus;
+  expiresAt: string | null;
+}
+
+export interface UserSubscription {
+  status: SubscriptionStatus;
+  expiresAt: string | null;
+}
+
 export interface ThemeOptionsConfig {
   general: GeneralSettings;
   homepageSections: HomepageSectionItem[];
@@ -135,4 +153,5 @@ export interface ThemeOptionsConfig {
   headerFooter: HeaderFooterSettings;
   seo: SeoSettings;
   ads: AdsSettings;
+  subscriptionPayments: SubscriptionPaymentSettings;
 }

@@ -1,5 +1,39 @@
 import { Movie, FilterOptions, Comment, UserAccount } from '../types/movie';
-import { ThemeOptionsConfig, AdminUser } from '../types/admin';
+import { ThemeOptionsConfig, AdminUser, AdminSubscription, SubscriptionStatus, UserSubscription } from '../types/admin';
+import { SubscriptionPaymentRequest, SubscriptionPaymentSettings, SubscriptionPlanId, PaymentProvider } from './subscriptionPlans';
+
+async function readPasswordResetResponse(
+  response: Response,
+  fallbackMessage: string
+): Promise<Record<string, unknown>> {
+  const body = await response.text();
+  if (!body.trim()) {
+    throw new Error(response.ok
+      ? 'The server returned an empty response. Restart the application server and try again.'
+      : `${fallbackMessage} (HTTP ${response.status}).`);
+  }
+
+  let data: unknown;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    if (response.status === 404) {
+      throw new Error('Password reset is not available on the running server. Rebuild and restart the backend, then try again.');
+    }
+    throw new Error(response.ok
+      ? 'The server returned an invalid response. Restart the application server and try again.'
+      : `${fallbackMessage} (HTTP ${response.status}).`);
+  }
+
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('The server returned an invalid response. Please try again.');
+  }
+  const payload = data as Record<string, unknown>;
+  if (!response.ok) {
+    throw new Error(typeof payload.error === 'string' ? payload.error : `${fallbackMessage} (HTTP ${response.status}).`);
+  }
+  return payload;
+}
 
 class MovieApiService {
   private movies: Movie[] = [];
@@ -55,6 +89,38 @@ class MovieApiService {
     if (!res.ok) throw new Error(data.error || 'Could not resend verification code.');
   }
 
+  public async requestPasswordReset(email: string): Promise<void> {
+    const res = await fetch('/api/auth/password-reset/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    await readPasswordResetResponse(res, 'Could not request a password reset.');
+  }
+
+  public async verifyPasswordResetCode(email: string, code: string): Promise<string> {
+    const res = await fetch('/api/auth/password-reset/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, code })
+    });
+    const data = await readPasswordResetResponse(res, 'Could not verify the reset code.');
+    if (typeof data.resetToken !== 'string' || !data.resetToken) {
+      throw new Error('The server did not return a valid reset token. Restart the application server and try again.');
+    }
+    return data.resetToken;
+  }
+
+  public async resetPassword(email: string, resetToken: string, password: string): Promise<void> {
+    const res = await fetch('/api/auth/password-reset/complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, resetToken, password })
+    });
+    const data = await readPasswordResetResponse(res, 'Could not reset the password.');
+    if (data.success !== true) throw new Error('The server did not confirm the password reset. Please try again.');
+  }
+
   public async logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
   }
@@ -64,6 +130,68 @@ class MovieApiService {
     if (res.status === 401) return null;
     if (!res.ok) throw new Error('Could not load account data.');
     return await res.json();
+  }
+
+  public async getUserSubscription(): Promise<UserSubscription> {
+    const res = await fetch('/api/user/subscription');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load subscription status.');
+    return data;
+  }
+
+  public async getSubscriptionPaymentRequests(): Promise<SubscriptionPaymentRequest[]> {
+    const res = await fetch('/api/user/subscription-payment-requests');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load payment requests.');
+    return data;
+  }
+
+  public async createSubscriptionPaymentRequest(payload: {
+    planId: SubscriptionPlanId;
+    provider: PaymentProvider;
+    transactionReference: string;
+  }): Promise<SubscriptionPaymentRequest> {
+    const res = await fetch('/api/user/subscription-payment-requests', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not submit payment for review.');
+    return data;
+  }
+
+  public async authorizePlayback(
+    movieId: string,
+    serverId: string,
+    season?: number,
+    episode?: number
+  ): Promise<{ url: string; sourceType: Movie['videoSources'][number]['sourceType']; clearKeyId?: string; clearKey?: string }> {
+    const res = await fetch('/api/playback/authorize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ movieId, serverId, season, episode })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const error = new Error(data.error || 'Playback authorization failed.') as Error & { code?: string };
+      error.code = data.code;
+      throw error;
+    }
+    return data;
+  }
+
+  public async checkPlaybackAccess(): Promise<void> {
+    const res = await fetch('/api/playback/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      const error = new Error(data.error || 'Playback authorization expired.') as Error & { code?: string };
+      error.code = data.code;
+      throw error;
+    }
   }
 
   public async saveUserState(favorites: string[], watchHistory: any[]) {
@@ -396,6 +524,46 @@ class MovieApiService {
     return await res.json();
   }
 
+  public async getAdminSubscriptions(): Promise<AdminSubscription[]> {
+    const res = await fetch('/api/admin/subscriptions');
+    if (!res.ok) throw new Error('Could not load subscription statuses.');
+    return await res.json();
+  }
+
+  public async saveAdminSubscription(
+    username: string,
+    subscription: { status: SubscriptionStatus; expiresAt: string | null }
+  ): Promise<void> {
+    const res = await fetch(`/api/admin/subscriptions/${encodeURIComponent(username)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(subscription)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not update subscription.');
+  }
+
+  public async getAdminSubscriptionPaymentRequests(): Promise<SubscriptionPaymentRequest[]> {
+    const res = await fetch('/api/admin/subscription-payment-requests');
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not load payment requests.');
+    return data;
+  }
+
+  public async reviewSubscriptionPaymentRequest(id: number, decision: 'approved' | 'rejected'): Promise<void> {
+    const res = await fetch(`/api/admin/subscription-payment-requests/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not review payment request.');
+  }
+
+  public async saveSubscriptionPaymentSettings(settings: SubscriptionPaymentSettings): Promise<ThemeOptionsConfig> {
+    return this.saveAdminSettings({ subscriptionPayments: settings });
+  }
+
   public async saveAdminUser(user: Partial<AdminUser> & { password?: string }): Promise<AdminUser> {
     const res = await fetch('/api/admin/users', {
       method: 'POST',
@@ -430,6 +598,25 @@ class MovieApiService {
     return data;
   }
 
+  public async fetchTmdbDetails(payload: {
+    tmdbId: number;
+    apiKey?: string;
+    type: 'movie' | 'tv';
+    previewOnly: true;
+  }): Promise<Movie> {
+    const res = await fetch('/api/admin/tmdb/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not fetch title details from TMDB.');
+    if (!data.movie || typeof data.movie !== 'object') {
+      throw new Error('TMDB returned incomplete title details. Please try again.');
+    }
+    return data.movie as Movie;
+  }
+
   public async syncTmdbCatalogMetadata(apiKey?: string): Promise<{ updated: number; failed: number; total: number }> {
     const res = await fetch('/api/admin/tmdb/sync-catalog-metadata', {
       method: 'POST',
@@ -462,6 +649,23 @@ class MovieApiService {
       body: JSON.stringify(payload)
     });
     return await res.json();
+  }
+
+  public async savePlaybackProgress(movieId: string, positionSeconds: number, durationSeconds: number, season?: number, episode?: number): Promise<void> {
+    const res = await fetch(`/api/playback/progress/${encodeURIComponent(movieId)}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ positionSeconds, durationSeconds, season, episode })
+    });
+    if (!res.ok && res.status !== 401) throw new Error('Could not save playback progress.');
+  }
+
+  public async getPlaybackProgress(movieId: string, season?: number, episode?: number): Promise<{positionSeconds:number;durationSeconds:number}|null> {
+    const query = season !== undefined && episode !== undefined ? `?season=${season}&episode=${episode}` : '';
+    const res = await fetch(`/api/playback/progress/${encodeURIComponent(movieId)}${query}`);
+    if (res.status === 401 || res.status === 404) return null;
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Could not retrieve playback progress.');
+    return data;
   }
 
   // Cache Diagnostics

@@ -7,11 +7,18 @@ export interface Episode {
   thumbnail: string;
   overview?: string;
   videoUrl?: string;
+  videoSources?: StreamingServer[];
 }
 
 export interface Season {
+  id?: string;
+  tmdbId?: string;
   seasonNumber: number;
   title: string;
+  overview?: string;
+  airDate?: string;
+  posterUrl?: string;
+  episodeCount?: number;
   episodes: Episode[];
 }
 
@@ -21,6 +28,11 @@ export interface StreamingServer {
   quality: string;
   speed: string;
   embedUrl: string;
+  sourceType?: 'direct' | 'hls' | 'dash' | 'embed' | 'hosted';
+  isDefault?: boolean;
+  isActive?: boolean;
+  clearKeyId?: string;
+  clearKey?: string;
 }
 
 export interface Comment {

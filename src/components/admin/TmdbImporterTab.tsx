@@ -75,10 +75,10 @@ export const TmdbImporterTab: React.FC<TmdbImporterTabProps> = ({
   };
 
   const alreadyInCatalog = (item: any) => existingMovies.some(movie =>
-    movie.id === `tmdb-${item.tmdbId}` || movie.title.toLowerCase() === item.title.toLowerCase()
+    String(movie.tmdbId || '') === String(item.tmdbId) || movie.id === `tmdb-${item.tmdbId}`
   );
 
-  const handleImport = async (item: any, publishStatus: 'publish' | 'draft', notify = true): Promise<boolean> => {
+  const handleImport = async (item: any, publishStatus: 'publish' | 'draft', notify = true, updateExisting = false): Promise<boolean> => {
     setImportingId(item.tmdbId);
     try {
       const res = await api.importTmdb({
@@ -92,7 +92,8 @@ export const TmdbImporterTab: React.FC<TmdbImporterTabProps> = ({
         posterUrl: item.posterUrl,
         backdropUrl: item.backdropUrl,
         releaseDate: item.releaseDate,
-        publishStatus
+        publishStatus,
+        updateExisting
       });
 
       if (res.error) {
@@ -341,10 +342,15 @@ export const TmdbImporterTab: React.FC<TmdbImporterTabProps> = ({
 
                     <div className="pt-2 flex items-center gap-2">
                       {alreadyExists ? (
-                        <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/10 px-2.5 py-1 rounded-lg">
-                          <Check className="w-3.5 h-3.5" />
-                          <span>In Catalog</span>
-                        </span>
+                        <>
+                          <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1 bg-emerald-500/10 px-2.5 py-1 rounded-lg">
+                            <Check className="w-3.5 h-3.5" /><span>In Catalog</span>
+                          </span>
+                          <button onClick={() => handleImport(item, 'publish', true, true)} disabled={isImporting}
+                            className="py-1.5 px-2.5 rounded-xl bg-[#1a1c23] hover:bg-[#343b4a] text-white text-[11px] font-medium disabled:opacity-50">
+                            {isImporting ? 'Updating...' : 'Update metadata'}
+                          </button>
+                        </>
                       ) : (
                         <>
                           <button
