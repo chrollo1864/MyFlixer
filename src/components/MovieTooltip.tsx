@@ -11,6 +11,9 @@ interface MovieTooltipProps {
 export const MovieTooltip: React.FC<MovieTooltipProps> = ({ movie, position = 'right' }) => {
   const { navigateTo, toggleFavorite, isFavorite } = useApp();
   const isFav = isFavorite(movie.id);
+  const genres = Array.isArray(movie.genres)
+    ? movie.genres.filter((genre): genre is string => typeof genre === 'string')
+    : [];
 
   return (
     <div className="w-72 bg-[#292d38] border border-[#1a1c23] rounded-2xl shadow-2xl p-3.5 text-left text-[#e9ecef] animate-in fade-in zoom-in-95 duration-150 pointer-events-auto">
@@ -59,7 +62,7 @@ export const MovieTooltip: React.FC<MovieTooltipProps> = ({ movie, position = 'r
         </p>
 
         <div className="flex flex-wrap gap-1">
-          {movie.genres.slice(0, 3).map((g) => (
+          {genres.slice(0, 3).map((g) => (
             <span
               key={g}
               className="bg-[#1e2129] text-[10px] text-[#4f83d3] px-2 py-0.5 rounded-full"

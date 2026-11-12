@@ -448,6 +448,14 @@ function ensureCatalogMetadataCurrent() {
   return catalogMetadataRefresh;
 }
 
+function includesSearchTerm(value: unknown, term: string): boolean {
+  return typeof value === 'string' && value.toLowerCase().includes(term);
+}
+
+function includesSearchTermIn(values: unknown, term: string): boolean {
+  return Array.isArray(values) && values.some(value => includesSearchTerm(value, term));
+}
+
 // Comment storage
 const COMMENTS_STORE: Record<string, any[]> = {};
 
@@ -506,11 +514,11 @@ app.get('/api/movies', async (req: Request, res: Response) => {
   }
   if (query && typeof query === 'string' && query.trim() !== '') {
     const q = query.toLowerCase().trim();
-    results = results.filter(m => 
-      m.title.toLowerCase().includes(q) ||
-      m.cast.some(c => c.toLowerCase().includes(q)) ||
-      m.director.toLowerCase().includes(q) ||
-      m.tags.some(t => t.toLowerCase().includes(q))
+    results = results.filter(m =>
+      includesSearchTerm(m.title, q) ||
+      includesSearchTermIn(m.cast, q) ||
+      includesSearchTerm(m.director, q) ||
+      includesSearchTermIn(m.tags, q)
     );
   }
 

@@ -35,6 +35,14 @@ async function readPasswordResetResponse(
   return payload;
 }
 
+function includesSearchTerm(value: unknown, term: string): boolean {
+  return typeof value === 'string' && value.toLowerCase().includes(term);
+}
+
+function includesSearchTermIn(values: unknown, term: string): boolean {
+  return Array.isArray(values) && values.some(value => includesSearchTerm(value, term));
+}
+
 class MovieApiService {
   private movies: Movie[] = [];
   private commentsStore: Record<string, Comment[]> = {};
@@ -350,10 +358,10 @@ class MovieApiService {
       // Query
       if (options.query && options.query.trim() !== '') {
         const q = options.query.toLowerCase().trim();
-        const matchesTitle = movie.title.toLowerCase().includes(q);
-        const matchesCast = movie.cast.some(c => c.toLowerCase().includes(q));
-        const matchesDirector = movie.director.toLowerCase().includes(q);
-        const matchesTags = movie.tags.some(t => t.toLowerCase().includes(q));
+        const matchesTitle = includesSearchTerm(movie.title, q);
+        const matchesCast = includesSearchTermIn(movie.cast, q);
+        const matchesDirector = includesSearchTerm(movie.director, q);
+        const matchesTags = includesSearchTermIn(movie.tags, q);
         if (!matchesTitle && !matchesCast && !matchesDirector && !matchesTags) {
           return false;
         }
