@@ -94,6 +94,15 @@
   cursor: auto !important;
 }
 
+.movie-player-responsive > div:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  max-width: none;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+
 .hero-curtain-stage {
   perspective: 1400px;
 }
