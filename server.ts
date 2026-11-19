@@ -613,9 +613,14 @@ app.post('/api/playback/authorize', async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'Select a valid episode.' });
   }
 
-  const episodeSource = (selectedEpisode as any)?.videoSources?.find((item: any) =>
-    item.id === serverId && item.isActive !== false
-  );
+  const episodeSources = ((selectedEpisode as any)?.videoSources || [])
+    .filter((item: any) => item?.id && item.isActive !== false);
+  const episodeSource = episodeSources.find((item: any) => item.id === serverId)
+    // Episode source IDs can differ (or be stale) when switching episodes.
+    // Use that episode's configured default instead of falling through to an
+    // unrelated title source or an empty configured server.
+    || episodeSources.find((item: any) => item.isDefault)
+    || episodeSources[0];
   const titleSource = episodeSource || movie.videoSources.find((item: any) =>
     item.id === serverId && item.isActive !== false
   );
