@@ -451,6 +451,14 @@ export const MoviePlayer: React.FC<MoviePlayerProps> = ({
             </div>
           </div>
         )}
+        {isPlaying && !playbackError && (
+          <span
+            aria-hidden="true"
+            className="darkrip-watermark pointer-events-none absolute left-4 top-4 z-20 text-sm font-semibold tracking-wide text-white/45 sm:left-5 sm:top-5 sm:text-base"
+          >
+            <span className="darkrip-watermark-text">DarkRip</span>
+          </span>
+        )}
       </div>
 
       <div className="bg-[#242832] border-t border-[#1a1c23]">

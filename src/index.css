@@ -104,6 +104,53 @@
   border: 0;
 }
 
+@keyframes darkrip-type-loop {
+  0% { width: 0; visibility: visible; animation-timing-function: steps(7, end); }
+  76.923% { width: 7ch; visibility: visible; }
+  92.308% { width: 7ch; visibility: visible; animation-timing-function: steps(7, end); }
+  98.462% { width: 0; visibility: visible; }
+  100% { width: 0; visibility: hidden; }
+}
+
+@keyframes darkrip-caret-blink {
+  50% { opacity: 0; }
+}
+
+.darkrip-watermark {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.darkrip-watermark-text {
+  position: relative;
+  display: inline-block;
+  overflow: hidden;
+  width: 0;
+  white-space: nowrap;
+  animation: darkrip-type-loop 6.5s linear infinite;
+}
+
+.darkrip-watermark-text::after {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 2px;
+  background: currentColor;
+  content: '';
+  animation: darkrip-caret-blink 0.8s step-end infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .darkrip-watermark-text {
+    animation: none;
+    width: 7ch;
+  }
+
+  .darkrip-watermark-text::after {
+    animation: none;
+    content: none;
+  }
+}
+
 .hero-curtain-stage {
   perspective: 1400px;
 }
