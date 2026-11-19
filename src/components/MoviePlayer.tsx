@@ -125,6 +125,14 @@ export const MoviePlayer: React.FC<MoviePlayerProps> = ({
         await document.exitFullscreen();
       } else {
         await container.requestFullscreen();
+        // Landscape lock is supported by Android browsers while fullscreen is
+        // active. Other browsers (notably iOS Safari) can still use fullscreen
+        // and will rotate according to the device's orientation setting.
+        try {
+          await screen.orientation?.lock('landscape');
+        } catch {
+          // Orientation locking is optional and must not block playback.
+        }
       }
     } catch {
       showToast('Fullscreen is unavailable in this browser.');
