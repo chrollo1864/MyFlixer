@@ -155,7 +155,7 @@ export const WatchPage: React.FC = () => {
             
             {/* Title & Badges */}
             <div>
-              <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-white tracking-tight">
+              <h1 className="break-words text-2xl sm:text-3xl lg:text-4xl font-extrabold text-white tracking-tight">
                 {selectedMovie.title}
               </h1>
               <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
@@ -185,25 +185,25 @@ export const WatchPage: React.FC = () => {
 
             {/* Metadata Detail Table */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-y-2 gap-x-6 text-xs text-[#b2b1ad] pt-2 border-t border-[#242832]">
-              <div className="flex items-start gap-2">
+              <div className="flex min-w-0 items-start gap-2">
                 <Globe className="w-3.5 h-3.5 text-[#4f83d3] shrink-0 mt-0.5" />
-                <span><strong className="text-white">Country:</strong> {selectedMovie.country}</span>
+                <span className="min-w-0 break-words"><strong className="text-white">Country:</strong> {selectedMovie.country}</span>
               </div>
-              <div className="flex items-start gap-2">
+              <div className="flex min-w-0 items-start gap-2">
                 <Calendar className="w-3.5 h-3.5 text-[#4f83d3] shrink-0 mt-0.5" />
-                <span><strong className="text-white">Released:</strong> {selectedMovie.releaseDate}</span>
+                <span className="min-w-0 break-words"><strong className="text-white">Released:</strong> {selectedMovie.releaseDate}</span>
               </div>
-              <div className="flex items-start gap-2">
+              <div className="flex min-w-0 items-start gap-2">
                 <Clapperboard className="w-3.5 h-3.5 text-[#4f83d3] shrink-0 mt-0.5" />
-                <span><strong className="text-white">Director:</strong> {selectedMovie.director}</span>
+                <span className="min-w-0 break-words"><strong className="text-white">Director:</strong> {selectedMovie.director}</span>
               </div>
-              <div className="flex items-start gap-2">
+              <div className="flex min-w-0 items-start gap-2">
                 <Building className="w-3.5 h-3.5 text-[#4f83d3] shrink-0 mt-0.5" />
-                <span><strong className="text-white">Production:</strong> {selectedMovie.production}</span>
+                <span className="min-w-0 break-words"><strong className="text-white">Production:</strong> {selectedMovie.production}</span>
               </div>
-              <div className="sm:col-span-2 flex items-start gap-2">
+              <div className="sm:col-span-2 flex min-w-0 items-start gap-2">
                 <Users className="w-3.5 h-3.5 text-[#4f83d3] shrink-0 mt-0.5" />
-                <span><strong className="text-white">Cast:</strong> {selectedMovie.cast.join(', ')}</span>
+                <span className="min-w-0 break-words"><strong className="text-white">Cast:</strong> {selectedMovie.cast.join(', ')}</span>
               </div>
               <div className="sm:col-span-2 flex items-start gap-2">
                 <Tag className="w-3.5 h-3.5 text-[#db6937] shrink-0 mt-0.5" />

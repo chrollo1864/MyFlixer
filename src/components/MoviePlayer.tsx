@@ -33,6 +33,8 @@ interface MoviePlayerProps {
   hasPrevEpisode?: boolean;
 }
 
+const MPD_REQUEST_BLOCKED = 'MPD_REQUEST_BLOCKED';
+
 export const MoviePlayer: React.FC<MoviePlayerProps> = ({ 
   movie, 
   activeEpisodeTitle,
@@ -319,12 +321,28 @@ export const MoviePlayer: React.FC<MoviePlayerProps> = ({
       player.addEventListener('error', (event: any) => {
         const detail = event.detail;
         console.error('Shaka Player Error:', detail);
+        if (detail?.category === shaka.util.Error.Category.NETWORK) {
+          video.pause();
+          setIsPlaying(false);
+          setPlaybackError(MPD_REQUEST_BLOCKED);
+          return;
+        }
         setPlaybackError(
           `DASH playback error (${detail?.code || 'unknown'}): ${detail?.message || 'Check console for DRM or CORS details.'}`
         );
       });
 
-      await player.load(playbackUrl);
+      try {
+        await player.load(playbackUrl);
+      } catch (error: any) {
+        if (error?.category === shaka.util.Error.Category.NETWORK) {
+          video.pause();
+          setIsPlaying(false);
+          setPlaybackError(MPD_REQUEST_BLOCKED);
+          return;
+        }
+        throw error;
+      }
     }).catch(error => {
       if (!cancelled) {
         setPlaybackError(error instanceof Error ? error.message : 'The browser could not initialize the streaming player.');
@@ -520,10 +538,10 @@ export const MoviePlayer: React.FC<MoviePlayerProps> = ({
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-3 sm:gap-3 sm:px-4">
+          <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
             {(hasPrevEpisode || hasNextEpisode) && (
-              <div className="flex items-center gap-1.5 ml-2 pl-2 border-l border-[#343b4a]">
+              <div className="flex items-center gap-1 ml-1.5 border-l border-[#343b4a] pl-1.5 sm:ml-2 sm:gap-1.5 sm:pl-2">
                 {hasPrevEpisode && (
                   <button
                     onClick={onPrevEpisode}
@@ -548,10 +566,10 @@ export const MoviePlayer: React.FC<MoviePlayerProps> = ({
             )}
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-1 sm:gap-2">
             <button
               onClick={() => void toggleFullscreen()}
-              className="text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 transition-all cursor-pointer bg-[#1a1c23] text-[#b2b1ad] hover:text-white hover:bg-[#2e3442]"
+              className="text-xs px-2 py-1.5 sm:px-3 rounded-full flex items-center gap-1.5 transition-all cursor-pointer bg-[#1a1c23] text-[#b2b1ad] hover:text-white hover:bg-[#2e3442]"
               title="Fullscreen (F)"
               aria-label="Toggle fullscreen"
             >
@@ -561,7 +579,7 @@ export const MoviePlayer: React.FC<MoviePlayerProps> = ({
 
             <button
               onClick={toggleCinemaMode}
-              className={`text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`text-xs px-2 py-1.5 sm:px-3 rounded-full flex items-center gap-1.5 transition-all cursor-pointer ${
                 cinemaMode
                   ? 'bg-amber-500/20 text-amber-300 border border-amber-500/50'
                   : 'bg-[#1a1c23] text-[#b2b1ad] hover:text-white hover:bg-[#2e3442]'
@@ -574,7 +592,7 @@ export const MoviePlayer: React.FC<MoviePlayerProps> = ({
 
             <button
               onClick={() => toggleFavorite(movie.id)}
-              className={`text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 transition-all cursor-pointer ${
+              className={`text-xs px-2 py-1.5 sm:px-3 rounded-full flex items-center gap-1.5 transition-all cursor-pointer ${
                 isFav
                   ? 'bg-rose-500/20 text-rose-300 border border-rose-500/50'
                   : 'bg-[#1a1c23] text-[#b2b1ad] hover:text-white hover:bg-[#2e3442]'
@@ -587,7 +605,7 @@ export const MoviePlayer: React.FC<MoviePlayerProps> = ({
 
             <button
               onClick={() => openModal('report')}
-              className="text-xs px-3 py-1.5 rounded-full bg-[#1a1c23] text-[#b2b1ad] hover:text-white hover:bg-[#2e3442] flex items-center gap-1.5 transition-all cursor-pointer"
+              className="text-xs px-2 py-1.5 sm:px-3 rounded-full bg-[#1a1c23] text-[#b2b1ad] hover:text-white hover:bg-[#2e3442] flex items-center gap-1.5 transition-all cursor-pointer"
               title="Report video issue"
             >
               <Flag className="w-3.5 h-3.5 text-amber-400" />
@@ -596,7 +614,7 @@ export const MoviePlayer: React.FC<MoviePlayerProps> = ({
 
             <button
               onClick={handleShare}
-              className="text-xs px-3 py-1.5 rounded-full bg-[#1a1c23] text-[#b2b1ad] hover:text-white hover:bg-[#2e3442] flex items-center gap-1.5 transition-all cursor-pointer"
+              className="text-xs px-2 py-1.5 sm:px-3 rounded-full bg-[#1a1c23] text-[#b2b1ad] hover:text-white hover:bg-[#2e3442] flex items-center gap-1.5 transition-all cursor-pointer"
               title="Share Movie"
             >
               {isCopied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Share2 className="w-3.5 h-3.5" />}
@@ -635,22 +653,28 @@ export const MoviePlayer: React.FC<MoviePlayerProps> = ({
             </button>
             <ShieldAlert className="mx-auto mb-3 h-8 w-8 text-[#db6937]" />
             <h3 id="playback-error-title" className="text-lg font-bold text-white">
-              {playbackError === 'SUBSCRIPTION_REQUIRED' ? 'Subscription required' : 'Sign in to watch'}
+              {playbackError === MPD_REQUEST_BLOCKED
+                ? 'You Dirty Old Dog!'
+                : playbackError === 'SUBSCRIPTION_REQUIRED' ? 'Subscription required' : 'Sign in to watch'}
             </h3>
             <p id="playback-error-description" className="mt-2 text-sm text-[#b2b1ad]">
-              {playbackError === 'SUBSCRIPTION_REQUIRED'
+              {playbackError === MPD_REQUEST_BLOCKED
+                ? 'The DASH stream request failed, so playback was stopped. A browser extension, network filter, or server/network issue may be responsible.'
+                : playbackError === 'SUBSCRIPTION_REQUIRED'
                 ? 'An active subscription is required to watch movies and series. You can still browse the entire catalog.'
                 : 'Sign in and check your subscription options to start playback.'}
             </p>
-            <button
-              onClick={() => {
-                dismissPlaybackError();
-                navigateTo('subscription');
-              }}
-              className="mt-5 rounded-xl bg-gradient-flixer px-5 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
-            >
-              View subscription options
-            </button>
+            {playbackError !== MPD_REQUEST_BLOCKED && (
+              <button
+                onClick={() => {
+                  dismissPlaybackError();
+                  navigateTo('subscription');
+                }}
+                className="mt-5 rounded-xl bg-gradient-flixer px-5 py-3 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+              >
+                View subscription options
+              </button>
+            )}
           </div>
         </div>,
         document.body

@@ -356,7 +356,7 @@ export const Header: React.FC = () => {
 
       {/* Flyout Navigation Drawer (Header Menu) */}
       {isMenuOpen && (
-        <div className="fixed inset-0 top-20 bg-black/70 backdrop-blur-sm z-40 flex">
+        <div className="fixed inset-0 top-16 bg-black/70 backdrop-blur-sm z-40 flex sm:top-20">
           <div className="w-72 sm:w-80 bg-[#292d38] h-full border-r border-[#242832] p-5 overflow-y-auto space-y-4">
             <div>
               <div className="text-[11px] font-bold uppercase tracking-wider text-[#b2b1ad] mb-2 px-2">
