@@ -123,13 +123,40 @@ export const MoviePlayer: React.FC<MoviePlayerProps> = ({
     try {
       if (document.fullscreenElement && container.contains(document.fullscreenElement)) {
         await document.exitFullscreen();
+        // Unlocking is best effort; some browsers do not expose Screen Orientation.
+        try {
+          screen.orientation?.unlock();
+        } catch {
+          // Fullscreen still exits normally when orientation locking is unsupported.
+        }
       } else {
         await container.requestFullscreen();
+        // Orientation lock is restricted to fullscreen on most mobile browsers.
+        // Keep it optional so fullscreen continues working on iOS and desktop.
+        try {
+          await screen.orientation?.lock('landscape');
+        } catch {
+          // The browser or device may not allow orientation locking.
+        }
       }
     } catch {
       showToast('Fullscreen is unavailable in this browser.');
     }
   }, [showToast]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) {
+        try {
+          screen.orientation?.unlock();
+        } catch {
+          // Ignore unsupported orientation APIs.
+        }
+      }
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
 
   useEffect(() => {
     const handlePlayerKeyDown = (event: KeyboardEvent) => {
